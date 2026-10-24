@@ -245,6 +245,9 @@ void CSearch::Run()
 	std::priority_queue<TEntry, std::vector<TEntry>, std::greater<>> Open;
 	Open.push({Heuristic(m_Job.m_Start, 0), 0});
 	std::unordered_set<uint64_t> Seen;
+	// a few dozen different states per cell are enough: more only digs deeper into the same dead end and
+	// uses up the tries, then the search has to look elsewhere
+	std::vector<uint16_t> vPerCell((size_t)m_Job.m_Width * m_Job.m_Height * 4, 0);
 	float BestDistance = FAR;
 	int BestNode = 0;
 	int Goal = -1;
@@ -326,6 +329,13 @@ void CSearch::Run()
 				Key ^= ((uint64_t)(int)(New.m_HookPos.x / 16.0f) * 2654435761ull) ^ ((uint64_t)(int)(New.m_HookPos.y / 16.0f) * 40503ull);
 			if(!Seen.insert(Key).second)
 				continue;
+			{
+				const int cx = std::clamp((int)(New.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), cy = std::clamp((int)(New.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
+				const int Cell = (cy * m_Job.m_Width + cx) * 4 + std::min(Stage, 3);
+				if(!Done && vPerCell[Cell] >= 40)
+					continue;
+				vPerCell[Cell]++;
+			}
 			SNode Child;
 			Child.m_State = New;
 			Child.m_Parent = Index;
