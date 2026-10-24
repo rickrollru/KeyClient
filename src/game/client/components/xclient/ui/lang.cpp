@@ -745,6 +745,8 @@ namespace XcUi
 			{"No servers found", "Серверы не найдены"},
 			{"Asking the master servers for the list", "Запрашиваю список у мастер-серверов"},
 			{"Try another filter or refresh the list", "Попробуй другой фильтр или обнови список"},
+			{"Bot: stop", "Бот: остановить"},
+			{"The bot is searching: %d tries", "Бот ищет: %d попыток"},
 			{"Bot: find the way to the finish", "Бот: найти путь до финиша"},
 			{"Bot: hide the way", "Бот: скрыть путь"},
 			{"The bot needs a spawn (or a start line) and a finish line in the game layer", "Боту нужен спавн (или линия старта) и линия финиша в игровом слое"},

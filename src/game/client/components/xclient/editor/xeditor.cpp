@@ -896,6 +896,8 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					m_TuneRequest = true;
 				if(ImGui::MenuItem(Tr("Bot: find the way to the finish"), nullptr, false, !m_pSolveJob))
 					StartSolve();
+				if(m_pSolveJob && ImGui::MenuItem(Tr("Bot: stop")))
+					m_pSolveJob->m_Cancel = true;
 				if(!m_vSolvePath.empty() && ImGui::MenuItem(Tr("Bot: hide the way")))
 					m_vSolvePath.clear();
 				ImGui::Separator();

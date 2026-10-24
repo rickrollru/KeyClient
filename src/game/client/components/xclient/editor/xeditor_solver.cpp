@@ -223,9 +223,27 @@ void CSearch::Run()
 		const int Index = Open.top().second;
 		Open.pop();
 		Result.m_Explored++;
-		if((Result.m_Explored & 255) == 0)
-			m_Job.m_Progress = Result.m_Explored;
 		const SNode Node = vNodes[Index];
+		if((Result.m_Explored & 255) == 0)
+		{
+			m_Job.m_Progress = Result.m_Explored;
+			// the live view: the way to the best place so far, and a sample of the tried places
+			std::vector<vec2> vPath;
+			for(int i = BestNode; i >= 0; i = vNodes[i].m_Parent)
+				vPath.push_back(vNodes[i].m_State.m_Pos);
+			std::reverse(vPath.begin(), vPath.end());
+			std::lock_guard<std::mutex> Lock(m_Job.m_LiveMutex);
+			m_Job.m_vLivePath = std::move(vPath);
+		}
+		if((Result.m_Explored & 7) == 0)
+		{
+			std::lock_guard<std::mutex> Lock(m_Job.m_LiveMutex);
+			if(m_Job.m_vLiveTried.size() < 20000)
+				m_Job.m_vLiveTried.push_back(Node.m_State.m_Pos);
+		}
+		// far too many places kept: the memory would run out
+		if(vNodes.size() > 2500000)
+			break;
 		if(Node.m_Steps >= MAX_STEPS)
 			continue;
 		const bool Hooking = Node.m_State.m_HookState != HOOK_IDLE && Node.m_State.m_HookState != HOOK_RETRACTED;
@@ -293,7 +311,7 @@ void CSearch::Run()
 				BestNode = ChildIndex;
 			}
 			// mostly towards the finish, a little for being quick
-			Open.push({Distance + Child.m_Steps * STEP_TICKS * 3.0f, ChildIndex});
+			Open.push({Distance + Child.m_Steps * STEP_TICKS * 5.0f, ChildIndex});
 		}
 		if(Goal >= 0)
 			break;

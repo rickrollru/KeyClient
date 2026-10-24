@@ -398,7 +398,7 @@ void CXcEditorUi::StartSolve()
 		return;
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, 60000);
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, 200000);
 	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)
 	{
 		XcUi::Toast(Tr("The bot needs a spawn (or a start line) and a finish line in the game layer"), XcUi::TOAST_ERROR);
@@ -426,9 +426,55 @@ void CXcEditorUi::UpdateSolve()
 
 void CXcEditorUi::RenderSolvePath()
 {
+	CEditor &E = *m_pEditor;
+	if(m_pSolveJob && !m_pSolveJob->m_Done)
+	{
+		// while it searches: the tried places as faint dots, the best way so far in yellow, and the count
+		std::vector<vec2> vPath, vTried;
+		{
+			std::lock_guard<std::mutex> Lock(m_pSolveJob->m_LiveMutex);
+			vPath = m_pSolveJob->m_vLivePath;
+			vTried = m_pSolveJob->m_vLiveTried;
+		}
+		CLayerGroup *pGroup = nullptr;
+		for(const auto &pG : E.Map()->m_vpGroups)
+			if(pG->m_GameGroup)
+				pGroup = pG.get();
+		if(pGroup)
+		{
+			pGroup->MapScreen();
+			IGraphics *pGraphics = E.Graphics();
+			pGraphics->TextureClear();
+			pGraphics->QuadsBegin();
+			pGraphics->SetColor(1.0f, 0.85f, 0.3f, 0.25f);
+			for(const vec2 &Pos : vTried)
+			{
+				const IGraphics::CQuadItem Dot(Pos.x - 2.0f, Pos.y - 2.0f, 4.0f, 4.0f);
+				pGraphics->QuadsDrawTL(&Dot, 1);
+			}
+			pGraphics->QuadsEnd();
+			pGraphics->LinesBegin();
+			pGraphics->SetColor(1.0f, 0.9f, 0.2f, 1.0f);
+			for(size_t i = 0; i + 1 < vPath.size(); i++)
+			{
+				const IGraphics::CLineItem Line(vPath[i].x, vPath[i].y, vPath[i + 1].x, vPath[i + 1].y);
+				pGraphics->LinesDraw(&Line, 1);
+			}
+			pGraphics->LinesEnd();
+			E.Ui()->MapScreen();
+		}
+		char aMsg[128];
+		str_format(aMsg, sizeof(aMsg), Tr("The bot is searching: %d tries"), m_pSolveJob->m_Progress.load());
+		const CUIRect Screen = *E.Ui()->Screen();
+		const float FontSize = 12.0f;
+		const float Width = E.TextRender()->TextWidth(FontSize, aMsg);
+		E.TextRender()->TextColor(1.0f, 0.9f, 0.3f, 1.0f);
+		E.TextRender()->Text(Screen.w * 0.5f - Width * 0.5f, 34.0f, FontSize, aMsg);
+		E.TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		return;
+	}
 	if(m_vSolvePath.size() < 2)
 		return;
-	CEditor &E = *m_pEditor;
 	CLayerGroup *pGame = nullptr;
 	for(const auto &pGroup : E.Map()->m_vpGroups)
 		if(pGroup->m_GameGroup)

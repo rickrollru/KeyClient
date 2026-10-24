@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace XcSolver
@@ -40,6 +41,10 @@ public:
 	std::atomic<bool> m_Done = false;
 	std::atomic<bool> m_Cancel = false;
 	std::atomic<int> m_Progress = 0; // tries looked at so far
+	// live view while it searches: the best way so far and the places it tried (under the mutex)
+	std::mutex m_LiveMutex;
+	std::vector<vec2> m_vLivePath;
+	std::vector<vec2> m_vLiveTried;
 	SResult m_Result;
 	bool m_HasStart = false;
 	bool m_HasGoal = false;
@@ -49,7 +54,7 @@ public:
 	std::vector<CTile> m_vGame;
 	std::vector<CTile> m_vFront;
 	vec2 m_Start;
-	int m_MaxTries = 60000;
+	int m_MaxTries = 200000;
 };
 
 // a search from the spawn (or start line) to the finish line of the layers; the tiles are copied
