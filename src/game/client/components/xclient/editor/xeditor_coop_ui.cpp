@@ -398,7 +398,8 @@ void CXcEditorUi::StartSolve()
 		return;
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, 200000, m_vSolveHints);
+	const std::shared_ptr<CLayerTele> &pTele = E.Map()->m_pTeleLayer;
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 200000, m_vSolveHints);
 	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)
 	{
 		XcUi::Toast(Tr("The bot needs a spawn (or a start line) and a finish line in the game layer"), XcUi::TOAST_ERROR);

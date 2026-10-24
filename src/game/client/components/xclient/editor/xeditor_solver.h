@@ -54,13 +54,14 @@ public:
 	int m_Height = 0;
 	std::vector<CTile> m_vGame;
 	std::vector<CTile> m_vFront;
+	std::vector<CTeleTile> m_vTele; // empty without a tele layer
 	vec2 m_Start;
 	std::vector<vec2> m_vHints; // points the way has to pass, in this order, before the finish
 	int m_MaxTries = 200000;
 };
 
 // a search from the spawn (or start line) to the finish line of the layers; the tiles are copied
-std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {});
+std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {});
 } // namespace XcSolver
 
 #endif
