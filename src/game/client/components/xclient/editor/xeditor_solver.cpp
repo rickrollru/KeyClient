@@ -17,7 +17,9 @@ namespace
 {
 // a decision every few ticks: often enough for gores timing, few enough to search
 constexpr int STEP_TICKS = 5;
-constexpr int MAX_STEPS = 50 * 60 / STEP_TICKS; // a minute
+// near freeze every 2 ticks: dropping into a narrow shaft lined with freeze needs that precision
+constexpr int FINE_STEP_TICKS = 2;
+constexpr int MAX_TICKS = 50 * 60; // a minute
 constexpr float FAR = 1e9f;
 
 // the part of the character core that changes while it moves, small enough to keep many of them
@@ -44,7 +46,7 @@ struct SNode
 	SState m_State;
 	int m_Parent;
 	XcSolver::SStep m_Step;
-	int m_Steps;
+	int m_Steps; // ticks since the start
 	int m_Stage; // hints passed
 };
 
@@ -140,6 +142,12 @@ private:
 		return Value >= FAR ? FAR : Value + m_vRest[Stage];
 	}
 	void BuildField(std::vector<float> &vField, int Hint);
+	std::vector<uint8_t> m_vNearFreeze; // freeze or death within two cells
+	bool NearFreeze(vec2 Pos) const
+	{
+		const int x = std::clamp((int)(Pos.x / 32.0f), 0, m_Job.m_Width - 1), y = std::clamp((int)(Pos.y / 32.0f), 0, m_Job.m_Height - 1);
+		return m_vNearFreeze[y * m_Job.m_Width + x] != 0;
+	}
 };
 
 // Hint -1: from the finish line
@@ -190,6 +198,14 @@ void CSearch::Run()
 {
 	XcSolver::SResult &Result = m_Job.m_Result;
 	m_Collision.XcInitTiles(m_Job.m_vGame.data(), m_Job.m_vFront.empty() ? nullptr : m_Job.m_vFront.data(), m_Job.m_Width, m_Job.m_Height);
+	m_vNearFreeze.assign((size_t)m_Job.m_Width * m_Job.m_Height, 0);
+	for(int y = 0; y < m_Job.m_Height; y++)
+		for(int x = 0; x < m_Job.m_Width; x++)
+			if(Deadly(Tile(m_Job.m_vGame, x, y)) || Deadly(Tile(m_Job.m_vFront, x, y)))
+				for(int dy = -2; dy <= 2; dy++)
+					for(int dx = -2; dx <= 2; dx++)
+						if(x + dx >= 0 && y + dy >= 0 && x + dx < m_Job.m_Width && y + dy < m_Job.m_Height)
+							m_vNearFreeze[(y + dy) * m_Job.m_Width + x + dx] = 1;
 	const int NumHints = (int)m_Job.m_vHints.size();
 	m_vvFields.resize(NumHints + 1);
 	for(int k = 0; k < NumHints; k++)
@@ -278,7 +294,7 @@ void CSearch::Run()
 		// far too many places kept: the memory would run out
 		if(vNodes.size() > 2500000)
 			break;
-		if(Node.m_Steps >= MAX_STEPS)
+		if(Node.m_Steps >= MAX_TICKS)
 			continue;
 		const bool Hooking = Node.m_State.m_HookState != HOOK_IDLE && Node.m_State.m_HookState != HOOK_RETRACTED;
 		for(const XcSolver::SStep &Step : vSteps)
@@ -287,7 +303,8 @@ void CSearch::Run()
 				continue; // nothing to hold
 			Load(Core, Node.m_State);
 			bool Dead = false, Done = false;
-			for(int t = 0; t < STEP_TICKS && !Dead && !Done; t++)
+			const int Ticks = NearFreeze(Node.m_State.m_Pos) ? FINE_STEP_TICKS : STEP_TICKS;
+			for(int t = 0; t < Ticks && !Dead && !Done; t++)
 			{
 				CNetObj_PlayerInput &Input = Core.m_Input;
 				Input.m_Direction = Step.m_Direction;
@@ -332,7 +349,7 @@ void CSearch::Run()
 			{
 				const int cx = std::clamp((int)(New.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), cy = std::clamp((int)(New.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
 				const int Cell = (cy * m_Job.m_Width + cx) * 4 + std::min(Stage, 3);
-				if(!Done && vPerCell[Cell] >= 40)
+				if(!Done && vPerCell[Cell] >= (NearFreeze(New.m_Pos) ? 160 : 40))
 					continue;
 				vPerCell[Cell]++;
 			}
@@ -340,7 +357,8 @@ void CSearch::Run()
 			Child.m_State = New;
 			Child.m_Parent = Index;
 			Child.m_Step = Step;
-			Child.m_Steps = Node.m_Steps + 1;
+			Child.m_Step.m_Ticks = Ticks;
+			Child.m_Steps = Node.m_Steps + Ticks;
 			Child.m_Stage = Stage;
 			vNodes.push_back(Child);
 			const int ChildIndex = (int)vNodes.size() - 1;
@@ -358,7 +376,7 @@ void CSearch::Run()
 				BestNode = ChildIndex;
 			}
 			// mostly towards the finish, a little for being quick
-			Open.push({Distance + Child.m_Steps * STEP_TICKS * 5.0f, ChildIndex});
+			Open.push({Distance + Child.m_Steps * 5.0f, ChildIndex});
 		}
 		if(Goal >= 0)
 			break;
@@ -379,7 +397,7 @@ void CSearch::Run()
 	}
 	std::reverse(Result.m_vPath.begin(), Result.m_vPath.end());
 	std::reverse(Result.m_vSteps.begin(), Result.m_vSteps.end());
-	Result.m_Ticks = (int)Result.m_vSteps.size() * STEP_TICKS;
+	Result.m_Ticks = vNodes[Last].m_Steps;
 	m_Collision.Unload();
 }
 } // namespace

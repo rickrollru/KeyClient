@@ -20,6 +20,7 @@ struct SStep
 	bool m_Jump; // pressed at the start of the step
 	int m_Hook; // 0 released, 1 held, 2 pressed again
 	vec2 m_Target; // where the mouse points (relative)
+	int m_Ticks = 5; // how long the step lasts
 };
 
 struct SResult
