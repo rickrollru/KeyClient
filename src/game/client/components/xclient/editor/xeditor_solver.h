@@ -46,6 +46,7 @@ public:
 	std::mutex m_LiveMutex;
 	std::vector<vec2> m_vLivePath;
 	std::vector<vec2> m_vLiveTried;
+	std::atomic<int> m_LiveTicks = 0; // game time of the best way so far
 	SResult m_Result;
 	bool m_HasStart = false;
 	bool m_HasGoal = false;

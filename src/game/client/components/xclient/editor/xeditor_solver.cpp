@@ -417,6 +417,7 @@ void CSearch::Run()
 			for(int i = BestNode; i >= 0; i = vNodes[i].m_Parent)
 				vPath.push_back(vNodes[i].m_State.m_Pos);
 			std::reverse(vPath.begin(), vPath.end());
+			m_Job.m_LiveTicks = vNodes[BestNode].m_Steps;
 			std::lock_guard<std::mutex> Lock(m_Job.m_LiveMutex);
 			m_Job.m_vLivePath = std::move(vPath);
 		}

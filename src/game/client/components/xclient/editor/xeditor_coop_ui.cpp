@@ -390,6 +390,13 @@ void CXcEditorUi::RenderInGame()
 }
 
 
+// game time as on the race timer: 1:23.45
+static void FormatRaceTime(char *pBuf, int Size, int Ticks)
+{
+	const int Centis = Ticks * 2; // 50 ticks a second
+	str_format(pBuf, Size, "%d:%02d.%02d", Centis / 6000, (Centis / 100) % 60, Centis % 100);
+}
+
 void CXcEditorUi::StartSolve()
 {
 	CEditor &E = *m_pEditor;
@@ -417,10 +424,12 @@ void CXcEditorUi::UpdateSolve()
 	m_vSolvePath = Result.m_vPath;
 	m_SolveFound = Result.m_Found;
 	char aMsg[256];
+	char aTime[32];
+	FormatRaceTime(aTime, sizeof(aTime), Result.m_Ticks);
 	if(Result.m_Found)
-		str_format(aMsg, sizeof(aMsg), Tr("The bot got through: %.1f s, %d hooks, %d jumps"), Result.m_Ticks / 50.0f, Result.m_Hooks, Result.m_Jumps);
+		str_format(aMsg, sizeof(aMsg), Tr("The bot finished in %s: %d hooks, %d jumps"), aTime, Result.m_Hooks, Result.m_Jumps);
 	else
-		str_format(aMsg, sizeof(aMsg), Tr("The bot found no way (%d tries). The red mark is as far as it got"), Result.m_Explored);
+		str_format(aMsg, sizeof(aMsg), Tr("The bot found no way (%d tries). It got to the red mark in %s"), Result.m_Explored, aTime);
 	XcUi::Toast(aMsg, Result.m_Found ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
 	m_pSolveJob.reset();
 }
@@ -504,8 +513,9 @@ void CXcEditorUi::RenderSolvePath()
 			pGraphics->LinesEnd();
 			E.Ui()->MapScreen();
 		}
-		char aMsg[128];
-		str_format(aMsg, sizeof(aMsg), Tr("The bot is searching: %d tries"), m_pSolveJob->m_Progress.load());
+		char aMsg[160], aTime[32];
+		FormatRaceTime(aTime, sizeof(aTime), m_pSolveJob->m_LiveTicks.load());
+		str_format(aMsg, sizeof(aMsg), Tr("The bot is searching: %d tries, the best way so far %s"), m_pSolveJob->m_Progress.load(), aTime);
 		const CUIRect Screen = *E.Ui()->Screen();
 		const float FontSize = 12.0f;
 		const float Width = E.TextRender()->TextWidth(FontSize, aMsg);
