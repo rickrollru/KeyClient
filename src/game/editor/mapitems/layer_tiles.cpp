@@ -12,6 +12,8 @@
 #include <game/editor/editor_actions.h>
 #include <game/editor/enums.h>
 
+#include <game/client/components/xclient/editor/xeditor_lod.h> // XClient
+
 #include <iterator>
 #include <numeric>
 
@@ -184,6 +186,10 @@ void CLayerTiles::Render(const CEditorMap *pRenderMap)
 	ColorRGBA ColorEnv = ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f);
 	pRenderMap->m_EnvelopeEvaluator.EnvelopeEval(m_ColorEnvOffset, m_ColorEnv, ColorEnv, 4);
 	const ColorRGBA Color = ColorRGBA(m_Color.r / 255.0f, m_Color.g / 255.0f, m_Color.b / 255.0f, m_Color.a / 255.0f).Multiply(ColorEnv);
+
+	// XClient: zoomed far out a big layer is one picture instead of a quad per tile (and no overlay numbers)
+	if(XcEditorLod::Render(Editor(), this, pRenderMap, Color))
+		return;
 
 	Graphics()->BlendNone();
 	Editor()->RenderMap()->RenderTilemap(m_pTiles, m_Width, m_Height, 32.0f, Color, LAYERRENDERFLAG_OPAQUE);

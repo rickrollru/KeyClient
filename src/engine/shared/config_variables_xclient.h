@@ -557,6 +557,7 @@ MACRO_CONFIG_INT(XcMusicToasts, xc_music_toasts, 1, 0, 1, CFGFLAG_CLIENT | CFGFL
 // Map editor
 MACRO_CONFIG_INT(XcEditorStyle, xc_editor_style, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Map editor in the Exora Client style: flat dark panels, accent selection, the menu font")
 MACRO_CONFIG_INT(XcEditorGuideSeen, xc_editor_guide_seen, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "The map editor guide was shown once")
+MACRO_CONFIG_INT(XcEditorLod, xc_editor_lod, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Editor: zoomed far out, big tile layers are drawn as one picture (much faster on big maps)")
 MACRO_CONFIG_INT(XcEditorUi, xc_editor_ui, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "The new map editor interface in the Exora Client style (0 = the classic editor)")
 MACRO_CONFIG_INT(XcAspectRatio, xc_aspect_ratio, 0, 0, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Aspect ratio of the game picture in percent of the height (133 = 4:3), stretched to the screen; 0 = the screen's own")
 MACRO_CONFIG_INT(XcEditorScale, xc_editor_scale, 110, 70, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Size of the new map editor interface in percent")

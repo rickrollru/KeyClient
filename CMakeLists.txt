@@ -3101,6 +3101,8 @@ if(CLIENT)
     components/xclient/editor/xeditor_coop_ui.cpp
     components/xclient/editor/xeditor_live.cpp
     components/xclient/editor/xeditor_live.h
+    components/xclient/editor/xeditor_lod.cpp
+    components/xclient/editor/xeditor_lod.h
     components/xclient/editor/xeditor_tune.cpp
     components/xclient/hud/xc_chat.cpp
     components/xclient/hud/xc_effects.cpp
