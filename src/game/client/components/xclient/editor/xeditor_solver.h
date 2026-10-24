@@ -83,6 +83,18 @@ public:
 
 // a search from the spawn (or start line) to the finish line of the layers; the tiles are copied
 std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {}, int TowerDepth = 0, bool Forgiving = false, bool Ideal = false);
+
+// the ideal route: no physics at all, the shortest line from the spawn through the hints (in their order) to the
+// finish that keeps clear of walls, freeze and death, as if the tee could fly anywhere
+struct SRoute
+{
+	bool m_HasStart = false;
+	bool m_HasGoal = false;
+	int m_FailedHint = -1; // the hint that cannot be reached (the hints count, then the finish), -1: none
+	std::vector<vec2> m_vPath;
+	float m_Length = 0.0f; // in pixels
+};
+SRoute IdealRoute(const CTile *pGame, const CTile *pFront, int Width, int Height, const std::vector<vec2> &vHints);
 } // namespace XcSolver
 
 #endif

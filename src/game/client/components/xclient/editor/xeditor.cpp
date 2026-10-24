@@ -306,6 +306,7 @@ void CXcEditorUi::Render()
 		RenderCoopTees();
 		UpdateSolve();
 		RenderSolvePath();
+		RenderIdealRoute();
 		// Ctrl + right click on a tile picks its layer, again: the next layer with a tile there (like the classic editor)
 		if(E.LayerSelector()->SelectByTile())
 		{
@@ -909,8 +910,10 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					StartSolve();
 				if(ImGui::MenuItem(Tr("Bot: find the way, soft check (short touches of freeze are forgiven)"), nullptr, false, !m_pSolveJob))
 					StartSolve(0, "", true);
-				if(ImGui::MenuItem(Tr("Bot: ideal run (not human, the fastest the physics allows; slower to find)"), nullptr, false, !m_pSolveJob))
-					StartSolve(0, "", false, true);
+				if(ImGui::MenuItem(Tr("Ideal route through the hints (no physics, just the line)")))
+					StartIdealRoute();
+				if(!m_IdealRoute.m_vPath.empty() && ImGui::MenuItem(Tr("Hide the ideal route")))
+					m_IdealRoute = {};
 				if(m_pSolveJob && ImGui::MenuItem(Tr("Bot: stop")))
 					m_pSolveJob->m_Cancel = true;
 				if(ImGui::MenuItem(Tr("Bot: place hints (left click adds, right click removes)"), nullptr, m_HintMode))

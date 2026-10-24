@@ -357,6 +357,11 @@ private:
 	std::vector<vec2> m_vSolveHints;
 	bool m_HintMode = false;
 	void RenderSolveHints();
+	// the ideal route: through the hints without physics, a dot flies along it
+	void StartIdealRoute();
+	void RenderIdealRoute();
+	XcSolver::SRoute m_IdealRoute;
+	float m_IdealRouteStart = 0.0f;
 	void RenderSolveHeat();
 	void StartSolve(int TowerDepth = 0, const char *pLevel = "", bool Forgiving = false, bool Ideal = false);
 	void UpdateSolve();

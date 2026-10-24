@@ -1091,3 +1091,141 @@ std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile 
 	}).detach();
 	return pJob;
 }
+
+XcSolver::SRoute XcSolver::IdealRoute(const CTile *pGame, const CTile *pFront, int Width, int Height, const std::vector<vec2> &vHints)
+{
+	SRoute Route;
+	const int Num = Width * Height;
+	auto Index = [&](const CTile *pTiles, int i) { return pTiles ? (int)pTiles[i].m_Index : 0; };
+	// walls, freeze and death are out of bounds for the route
+	std::vector<bool> vBlocked(Num);
+	std::vector<bool> vGoal(Num);
+	int Spawn = -1, StartLine = -1;
+	for(int i = 0; i < Num; i++)
+	{
+		const int g = Index(pGame, i), f = Index(pFront, i);
+		auto Blocks = [](int t) { return t == TILE_SOLID || t == TILE_NOHOOK || t == TILE_DEATH || t == TILE_DFREEZE || t == TILE_FREEZE || t == TILE_LFREEZE; };
+		vBlocked[i] = Blocks(g) || Blocks(f);
+		vGoal[i] = g == TILE_FINISH || f == TILE_FINISH;
+		Route.m_HasGoal |= vGoal[i];
+		auto IsSpawn = [](int t) { return t >= ENTITY_OFFSET + ENTITY_SPAWN && t <= ENTITY_OFFSET + ENTITY_SPAWN_BLUE; };
+		if(Spawn < 0 && (IsSpawn(g) || IsSpawn(f)))
+			Spawn = i;
+		if(StartLine < 0 && (g == TILE_START || f == TILE_START))
+			StartLine = i;
+	}
+	const int From = Spawn >= 0 ? Spawn : StartLine;
+	Route.m_HasStart = From >= 0;
+	if(!Route.m_HasStart || !Route.m_HasGoal)
+		return Route;
+	auto Free = [&](int x, int y) { return x >= 0 && y >= 0 && x < Width && y < Height && !vBlocked[y * Width + x]; };
+	// a hint on a wall: the nearest free cell around it
+	auto CellOf = [&](vec2 Pos) {
+		const int cx = (int)(Pos.x / 32.0f), cy = (int)(Pos.y / 32.0f);
+		for(int r = 0; r <= 3; r++)
+			for(int y = cy - r; y <= cy + r; y++)
+				for(int x = cx - r; x <= cx + r; x++)
+					if(Free(x, y))
+						return y * Width + x;
+		return -1;
+	};
+	// the shortest way between two cells (or to any finish cell) over free cells, diagonals only past free corners
+	std::vector<float> vDist(Num);
+	std::vector<int> vPrev(Num);
+	auto Way = [&](int A, int B, std::vector<int> &vCells) {
+		std::fill(vDist.begin(), vDist.end(), 1e30f);
+		using TEntry = std::pair<float, int>;
+		std::priority_queue<TEntry, std::vector<TEntry>, std::greater<>> Open;
+		vDist[A] = 0.0f;
+		vPrev[A] = -1;
+		Open.push({0.0f, A});
+		int End = -1;
+		while(!Open.empty())
+		{
+			const auto [d, c] = Open.top();
+			Open.pop();
+			if(d > vDist[c])
+				continue;
+			if(B >= 0 ? c == B : vGoal[c])
+			{
+				End = c;
+				break;
+			}
+			const int x = c % Width, y = c / Width;
+			for(int dy = -1; dy <= 1; dy++)
+				for(int dx = -1; dx <= 1; dx++)
+				{
+					if((dx == 0 && dy == 0) || !Free(x + dx, y + dy))
+						continue;
+					if(dx != 0 && dy != 0 && (!Free(x + dx, y) || !Free(x, y + dy)))
+						continue;
+					const int n = (y + dy) * Width + x + dx;
+					const float nd = d + (dx != 0 && dy != 0 ? 1.4142f : 1.0f);
+					if(nd < vDist[n])
+					{
+						vDist[n] = nd;
+						vPrev[n] = c;
+						Open.push({nd, n});
+					}
+				}
+		}
+		if(End < 0)
+			return false;
+		std::vector<int> vPart;
+		for(int c = End; c != A; c = vPrev[c])
+			vPart.push_back(c);
+		std::reverse(vPart.begin(), vPart.end());
+		vCells.insert(vCells.end(), vPart.begin(), vPart.end());
+		return true;
+	};
+	std::vector<int> vCells = {From};
+	for(size_t h = 0; h <= vHints.size(); h++)
+	{
+		const int Target = h < vHints.size() ? CellOf(vHints[h]) : -1;
+		if((h < vHints.size() && Target < 0) || !Way(vCells.back(), Target, vCells))
+		{
+			Route.m_FailedHint = (int)h;
+			break;
+		}
+	}
+	// pull the line tight: skip corners the tee can fly past without touching a blocked cell
+	auto Clear = [&](vec2 A, vec2 B) {
+		const int Steps = (int)(distance(A, B) / 4.0f) + 1;
+		for(int i = 0; i <= Steps; i++)
+		{
+			const vec2 P = mix(A, B, (float)i / Steps);
+			for(int k = 0; k < 4; k++)
+			{
+				const vec2 Q = P + vec2(k & 1 ? 13.0f : -13.0f, k & 2 ? 13.0f : -13.0f);
+				if(!Free((int)std::floor(Q.x / 32.0f), (int)std::floor(Q.y / 32.0f)))
+					return false;
+			}
+		}
+		return true;
+	};
+	auto Center = [&](int c) { return vec2((c % Width) * 32.0f + 16.0f, (c / Width) * 32.0f + 16.0f); };
+	// the hints stay on the line: the pulling never jumps over one
+	std::vector<bool> vKeep(vCells.size());
+	for(const vec2 &Hint : vHints)
+	{
+		const int c = CellOf(Hint);
+		for(size_t i = 0; i < vCells.size(); i++)
+			if(vCells[i] == c)
+			{
+				vKeep[i] = true;
+				break;
+			}
+	}
+	size_t i = 0;
+	Route.m_vPath.push_back(Center(vCells[0]));
+	while(i + 1 < vCells.size())
+	{
+		size_t j = i + 1;
+		while(j + 1 < vCells.size() && !vKeep[j] && Clear(Center(vCells[i]), Center(vCells[j + 1])))
+			j++;
+		Route.m_vPath.push_back(Center(vCells[j]));
+		Route.m_Length += distance(Center(vCells[i]), Center(vCells[j]));
+		i = j;
+	}
+	return Route;
+}

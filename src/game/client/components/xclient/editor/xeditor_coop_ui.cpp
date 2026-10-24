@@ -699,3 +699,83 @@ void CXcEditorUi::RenderSolvePath()
 	}
 	E.Ui()->MapScreen();
 }
+
+void CXcEditorUi::StartIdealRoute()
+{
+	CEditor &E = *m_pEditor;
+	const std::shared_ptr<CLayerGame> &pGame = E.Map()->m_pGameLayer;
+	if(!pGame)
+		return;
+	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
+	m_IdealRoute = XcSolver::IdealRoute(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, m_vSolveHints);
+	m_IdealRouteStart = E.Client()->GlobalTime();
+	if(!m_IdealRoute.m_HasStart || !m_IdealRoute.m_HasGoal)
+	{
+		XcUi::Toast(Tr("The bot needs a spawn (or a start line) and a finish line in the game layer"), XcUi::TOAST_ERROR);
+		return;
+	}
+	char aMsg[256];
+	if(m_IdealRoute.m_FailedHint >= 0 && m_IdealRoute.m_FailedHint < (int)m_vSolveHints.size())
+		str_format(aMsg, sizeof(aMsg), Tr("No free way to hint %d: walls or freeze close it off"), m_IdealRoute.m_FailedHint + 1);
+	else if(m_IdealRoute.m_FailedHint >= 0)
+		str_format(aMsg, sizeof(aMsg), "%s", Tr("No free way to the finish: walls or freeze close it off"));
+	else
+		str_format(aMsg, sizeof(aMsg), Tr("Ideal route: %d cells"), (int)(m_IdealRoute.m_Length / 32.0f));
+	XcUi::Toast(aMsg, m_IdealRoute.m_FailedHint >= 0 ? XcUi::TOAST_ERROR : XcUi::TOAST_SUCCESS);
+}
+
+void CXcEditorUi::RenderIdealRoute()
+{
+	CEditor &E = *m_pEditor;
+	const std::vector<vec2> &vPath = m_IdealRoute.m_vPath;
+	if(vPath.size() < 2)
+		return;
+	CLayerGroup *pGame = nullptr;
+	for(const auto &pGroup : E.Map()->m_vpGroups)
+		if(pGroup->m_GameGroup)
+			pGame = pGroup.get();
+	if(!pGame)
+		return;
+	pGame->MapScreen();
+	IGraphics *pGraphics = E.Graphics();
+	pGraphics->TextureClear();
+	pGraphics->LinesBegin();
+	pGraphics->SetColor(0.4f, 0.85f, 1.0f, 0.95f);
+	for(size_t i = 0; i + 1 < vPath.size(); i++)
+	{
+		const IGraphics::CLineItem Line(vPath[i].x, vPath[i].y, vPath[i + 1].x, vPath[i + 1].y);
+		pGraphics->LinesDraw(&Line, 1);
+	}
+	pGraphics->LinesEnd();
+	// the dot flies the route at running speed (10 px a tick), waits a second at the end and starts again
+	const float Speed = 500.0f;
+	const float Duration = m_IdealRoute.m_Length / Speed;
+	const float Time = std::fmod(E.Client()->GlobalTime() - m_IdealRouteStart, Duration + 1.0f);
+	float Left = std::min(Time, Duration) * Speed;
+	vec2 Pos = vPath.back();
+	for(size_t i = 0; i + 1 < vPath.size(); i++)
+	{
+		const float Segment = distance(vPath[i], vPath[i + 1]);
+		if(Left <= Segment)
+		{
+			Pos = mix(vPath[i], vPath[i + 1], Segment > 0.0f ? Left / Segment : 0.0f);
+			break;
+		}
+		Left -= Segment;
+	}
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(0.4f, 0.85f, 1.0f, 1.0f);
+	pGraphics->DrawCircle(Pos.x, Pos.y, 14.0f, 24);
+	pGraphics->QuadsEnd();
+	E.Ui()->MapScreen();
+	// the length and the time stay written over the map
+	char aTime[32], aMsg[160];
+	FormatRaceTime(aTime, sizeof(aTime), (int)(Duration * 50.0f));
+	str_format(aMsg, sizeof(aMsg), Tr("Ideal route: %d cells, %s at running speed"), (int)(m_IdealRoute.m_Length / 32.0f), aTime);
+	const CUIRect Screen = *E.Ui()->Screen();
+	const float FontSize = 12.0f;
+	const float Width = E.TextRender()->TextWidth(FontSize, aMsg);
+	E.TextRender()->TextColor(0.5f, 0.88f, 1.0f, 1.0f);
+	E.TextRender()->Text(Screen.w * 0.5f - Width * 0.5f, 50.0f, FontSize, aMsg);
+	E.TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+}
