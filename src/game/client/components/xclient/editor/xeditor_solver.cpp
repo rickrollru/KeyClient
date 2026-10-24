@@ -557,18 +557,11 @@ void CSearch::Run()
 	int MaxStage = 0, AtMaxStage = 0, SinceStage = 0, SkipStage = 0;
 	// the tries left behind wait here: when every try ahead ends in a dead end, they come back
 	std::vector<TEntry> vReserve;
+	// tries before this hint go to the reserve as they come out of the queue (going through the whole queue
+	// at every hint made the search slower and slower along the map)
+	int DropStage = 0;
 	auto DropBehind = [&]() {
-		std::vector<TEntry> vKeep;
-		while(!Open.empty())
-		{
-			if(vNodes[Open.top().second].m_Stage >= MaxStage)
-				vKeep.push_back(Open.top());
-			else
-				vReserve.push_back(Open.top());
-			Open.pop();
-		}
-		for(const TEntry &Entry : vKeep)
-			Open.push(Entry);
+		DropStage = MaxStage;
 		std::fill(vRegionTries.begin(), vRegionTries.end(), 0);
 	};
 
@@ -579,8 +572,15 @@ void CSearch::Run()
 			for(const TEntry &Entry : vReserve)
 				Open.push(Entry);
 			vReserve.clear();
+			DropStage = 0;
 		}
 		const int Index = Open.top().second;
+		if(vNodes[Index].m_Stage < DropStage)
+		{
+			vReserve.push_back(Open.top());
+			Open.pop();
+			continue;
+		}
 		Open.pop();
 		Result.m_Explored++;
 		const SNode Node = vNodes[Index];
@@ -621,10 +621,16 @@ void CSearch::Run()
 		if(Node.m_Steps >= MAX_TICKS)
 			continue;
 		const bool Hooking = Node.m_State.m_HookState != HOOK_IDLE && Node.m_State.m_HookState != HOOK_RETRACTED;
+		// both jumps used up in the air: the steps with a jump do the same as without
+		const vec2 Feet = Node.m_State.m_Pos + vec2(0.0f, 14.0f + 5.0f);
+		const bool Grounded = m_Collision.CheckPoint(Feet.x - 7.0f, Feet.y) || m_Collision.CheckPoint(Feet.x + 7.0f, Feet.y);
+		const bool CanJump = Grounded || !(Node.m_State.m_Jumped & 2);
 		for(const XcSolver::SStep &Step : vSteps)
 		{
 			if(Step.m_Hook == 1 && !Hooking)
 				continue; // nothing to hold
+			if(Step.m_Jump && !CanJump)
+				continue;
 			if(Node.m_State.m_FreezeTicks > 0 && &Step != &vSteps[0])
 				continue; // frozen: the input does nothing, one way is enough
 			Load(Core, Node.m_State);
