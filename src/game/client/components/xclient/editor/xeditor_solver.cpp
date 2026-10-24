@@ -846,7 +846,8 @@ void CSearch::Run()
 			Key ^= (uint64_t)New.m_TeleCheckpoint * 0xff51afd7ed558ccdull;
 			Key ^= (uint64_t)(New.m_FreezeTicks / 10 + 1) * 0xc4ceb9fe1a85ec53ull;
 			// a hint reached: the next one is the target
-			int Stage = std::max(Node.m_Stage, std::min(SkipStage, (int)m_Job.m_vHints.size()));
+			// a skipped hint is skipped only for the tries that got as far as it, not for the ones far behind
+			int Stage = Node.m_Stage >= SkipStage - 1 ? std::max(Node.m_Stage, std::min(SkipStage, (int)m_Job.m_vHints.size())) : Node.m_Stage;
 			// a hint counts as passed when the tee is near it, or already farther along the way than it (it may fly
 			// past a hint in a wide place without touching it)
 			while(Stage < (int)m_Job.m_vHints.size() && (distance(New.m_Pos, m_Job.m_vHints[Stage]) < 64.0f || Field(Stage + 1, New.m_Pos) + 16.0f < Field(Stage + 1, m_Job.m_vHints[Stage])))
