@@ -15,6 +15,7 @@
 #include <deque>
 #include <queue>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace
@@ -190,6 +191,15 @@ private:
 	mutable bool m_TouchedFreeze = false; // the soft check: this tick passed freeze
 	void Log(const char *pFormat, ...);
 	void LogGrid(vec2 Center, const std::vector<vec2> &vPath) const;
+	// the blocks a hook reaches from a cell: like a player, the bot hooks real blocks, not just a few directions
+	struct SHookSpot
+	{
+		vec2 m_Hit; // where the hook grabs
+		vec2 m_Before; // the free place just before it
+	};
+	std::unordered_map<int, std::vector<SHookSpot>> m_HookSpots;
+	const std::vector<SHookSpot> &HookSpots(vec2 Pos);
+	void AddAimedHooks(vec2 Pos, int Stage, int Count, std::vector<XcSolver::SStep> &vSteps);
 	std::vector<uint8_t> m_vNearFreeze; // freeze or death within two cells
 	bool NearFreeze(vec2 Pos) const
 	{
@@ -197,6 +207,69 @@ private:
 		return m_vNearFreeze[y * m_Job.m_Width + x] != 0;
 	}
 };
+
+const std::vector<CSearch::SHookSpot> &CSearch::HookSpots(vec2 Pos)
+{
+	const int x = std::clamp((int)(Pos.x / 32.0f), 0, m_Job.m_Width - 1), y = std::clamp((int)(Pos.y / 32.0f), 0, m_Job.m_Height - 1);
+	const int Cell = y * m_Job.m_Width + x;
+	auto It = m_HookSpots.find(Cell);
+	if(It != m_HookSpots.end())
+		return It->second;
+	// rays from the middle of the cell, one spot per block hit (the hook reaches 380 px)
+	std::vector<SHookSpot> &vSpots = m_HookSpots[Cell];
+	const vec2 Center(x * 32.0f + 16.0f, y * 32.0f + 16.0f);
+	int LastBlock = -1;
+	for(int i = 0; i < 72; i++)
+	{
+		const vec2 Dir = direction(i * 2.0f * pi / 72.0f);
+		vec2 Hit, Before;
+		if(m_Collision.IntersectLine(Center, Center + Dir * 370.0f, &Hit, &Before) != TILE_SOLID)
+			continue;
+		const vec2 Inside = Hit + Dir * 2.0f;
+		const int Block = (int)(Inside.y / 32.0f) * m_Job.m_Width + (int)(Inside.x / 32.0f);
+		if(Block == LastBlock)
+			continue;
+		LastBlock = Block;
+		vSpots.push_back({Inside, Before});
+	}
+	return vSpots;
+}
+
+void CSearch::AddAimedHooks(vec2 Pos, int Stage, int Count, std::vector<XcSolver::SStep> &vSteps)
+{
+	// the blocks that pull towards the way ahead first, spread out so they are not all the same direction
+	const std::vector<SHookSpot> &vSpots = HookSpots(Pos);
+	std::vector<std::pair<float, int>> vOrder;
+	for(int i = 0; i < (int)vSpots.size(); i++)
+	{
+		if(distance(vSpots[i].m_Hit, Pos) > 375.0f)
+			continue;
+		vOrder.push_back({Heuristic(vSpots[i].m_Before, Stage), i});
+	}
+	std::sort(vOrder.begin(), vOrder.end());
+	std::vector<float> vChosen;
+	for(const auto &[Score, i] : vOrder)
+	{
+		if((int)vChosen.size() >= Count)
+			break;
+		const float Angle = angle(vSpots[i].m_Hit - Pos);
+		bool Close = false;
+		for(float Other : vChosen)
+		{
+			float Diff = std::fabs(Angle - Other);
+			if(Diff > pi)
+				Diff = 2.0f * pi - Diff;
+			Close |= Diff < 6.0f * pi / 180.0f;
+		}
+		if(Close)
+			continue;
+		vChosen.push_back(Angle);
+	}
+	for(float Angle : vChosen)
+		for(int Dir = -1; Dir <= 1; Dir++)
+			for(int Jump = 0; Jump <= 1; Jump++)
+				vSteps.push_back({Dir, Jump != 0, 2, direction(Angle) * 100.0f});
+}
 
 // Hint -1: from the finish line
 void CSearch::BuildField(std::vector<float> &vDistance, int Hint)
@@ -642,9 +715,9 @@ void CSearch::Run()
 	Core.m_Input.m_TargetX = 1;
 
 	// the ways a step can go: run left, stand, run right; jump or not; let the hook go, hold it or hook again
-	// towards one of a few directions
+	// towards one of a few directions; the hooks aimed at real blocks around are added for each place (below)
 	std::vector<XcSolver::SStep> vSteps;
-	const float aAngles[] = {-90.0f, -60.0f, -120.0f, -30.0f, -150.0f, 0.0f, 180.0f, 45.0f, 135.0f};
+	const float aAngles[] = {-90.0f, -60.0f, -120.0f};
 	for(int Dir = -1; Dir <= 1; Dir++)
 		for(int Jump = 0; Jump <= 1; Jump++)
 		{
@@ -655,12 +728,8 @@ void CSearch::Run()
 		}
 	// near freeze also the directions in between: a tunnel with freeze above and below is crossed hanging on one
 	// block at the right angle (seen in a report on 70s)
+	// (now the aimed hooks: more of them near freeze)
 	std::vector<XcSolver::SStep> vFineSteps = vSteps;
-	const float aFineAngles[] = {-15.0f, -45.0f, -75.0f, -105.0f, -135.0f, -165.0f};
-	for(int Dir = -1; Dir <= 1; Dir++)
-		for(int Jump = 0; Jump <= 1; Jump++)
-			for(float Angle : aFineAngles)
-				vFineSteps.push_back({Dir, Jump != 0, 2, direction(Angle * pi / 180.0f) * 100.0f});
 	// the ideal run, not a human one: the hook may go in any of 16 directions (24 near freeze) and the input
 	// changes every 2 ticks (every tick near freeze)
 	if(m_Job.m_Ideal)
@@ -689,6 +758,7 @@ void CSearch::Run()
 	// it ran out of tries in a shaft lined with freeze (a report on 70s)
 	const int CellCapScale = m_Job.m_Ideal ? 3 : 1;
 
+	std::vector<XcSolver::SStep> vNodeSteps;
 	// a deque grows without copying everything over, so a long search does not need twice the memory for a moment
 	std::deque<SNode> vNodes;
 	SNode Root;
@@ -804,7 +874,10 @@ void CSearch::Run()
 		const vec2 Feet = Node.m_State.m_Pos + vec2(0.0f, 14.0f + 5.0f);
 		const bool Grounded = m_Collision.CheckPoint(Feet.x - 7.0f, Feet.y) || m_Collision.CheckPoint(Feet.x + 7.0f, Feet.y);
 		const bool CanJump = Grounded || !(Node.m_State.m_Jumped & 2);
-		const std::vector<XcSolver::SStep> &vNodeSteps = NearFreeze(Node.m_State.m_Pos) ? vFineSteps : vSteps;
+		const bool Fine = NearFreeze(Node.m_State.m_Pos);
+		vNodeSteps = Fine ? vFineSteps : vSteps;
+		if(!m_Job.m_Ideal)
+			AddAimedHooks(Node.m_State.m_Pos, Node.m_Stage, Fine ? 12 : 8, vNodeSteps);
 		for(const XcSolver::SStep &Step : vNodeSteps)
 		{
 			if(Step.m_Hook == 1 && !Hooking)
