@@ -975,7 +975,9 @@ void CSearch::Run()
 			int Stage = Node.m_Stage >= SkipStage - 1 ? std::max(Node.m_Stage, std::min(SkipStage, (int)m_Job.m_vHints.size())) : Node.m_Stage;
 			// a hint counts as passed when the tee is near it, or already farther along the way than it (it may fly
 			// past a hint in a wide place without touching it)
-			while(Stage < (int)m_Job.m_vHints.size() && (distance(New.m_Pos, m_Job.m_vHints[Stage]) < 64.0f || Field(Stage + 1, New.m_Pos) + 16.0f < Field(Stage + 1, m_Job.m_vHints[Stage])))
+			// a frozen tee passes no hints: it is most likely lost, and counting it made the search drop the good
+			// tries behind it (a 70s report: "hint 32 reached" by a tee falling frozen down a shaft)
+			while(New.m_FreezeTicks == 0 && Stage < (int)m_Job.m_vHints.size() && (distance(New.m_Pos, m_Job.m_vHints[Stage]) < 64.0f || Field(Stage + 1, New.m_Pos) + 16.0f < Field(Stage + 1, m_Job.m_vHints[Stage])))
 				Stage++;
 			Key ^= (uint64_t)Stage * 0x9e3779b97f4a7c15ull;
 			if(New.m_HookState == HOOK_GRABBED)
@@ -1006,7 +1008,7 @@ void CSearch::Run()
 			const float Distance = Heuristic(New.m_Pos, Stage);
 			if(Distance >= FAR)
 				continue;
-			if(Distance < BestDistance)
+			if(Distance < BestDistance && New.m_FreezeTicks == 0)
 			{
 				BestDistance = Distance;
 				BestNode = ChildIndex;
