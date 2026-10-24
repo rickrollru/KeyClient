@@ -237,38 +237,40 @@ const std::vector<CSearch::SHookSpot> &CSearch::HookSpots(vec2 Pos)
 
 void CSearch::AddAimedHooks(vec2 Pos, int Stage, int Count, std::vector<XcSolver::SStep> &vSteps)
 {
-	// the blocks that pull towards the way ahead first, spread out so they are not all the same direction
+	// one block in each direction around (the best one there for the way ahead): not only the hooks that pull
+	// forward, also the ones that brake or turn; a 70s report: the bot flew past a drop between freeze because
+	// the hook to the wall behind it, which stops the tee, was never tried
 	const std::vector<SHookSpot> &vSpots = HookSpots(Pos);
-	std::vector<std::pair<float, int>> vOrder;
+	float aBest[16];
+	int aSpot[16];
+	const int Sectors = std::min(Count, 16);
+	for(int k = 0; k < Sectors; k++)
+	{
+		aBest[k] = FAR * 2.0f;
+		aSpot[k] = -1;
+	}
 	for(int i = 0; i < (int)vSpots.size(); i++)
 	{
 		if(distance(vSpots[i].m_Hit, Pos) > 375.0f)
 			continue;
-		vOrder.push_back({Heuristic(vSpots[i].m_Before, Stage), i});
-	}
-	std::sort(vOrder.begin(), vOrder.end());
-	std::vector<float> vChosen;
-	for(const auto &[Score, i] : vOrder)
-	{
-		if((int)vChosen.size() >= Count)
-			break;
-		const float Angle = angle(vSpots[i].m_Hit - Pos);
-		bool Close = false;
-		for(float Other : vChosen)
+		const float Angle = angle(vSpots[i].m_Hit - Pos) + pi;
+		const int k = std::clamp((int)(Angle / (2.0f * pi) * Sectors), 0, Sectors - 1);
+		const float Score = Heuristic(vSpots[i].m_Before, Stage);
+		if(Score < aBest[k])
 		{
-			float Diff = std::fabs(Angle - Other);
-			if(Diff > pi)
-				Diff = 2.0f * pi - Diff;
-			Close |= Diff < 6.0f * pi / 180.0f;
+			aBest[k] = Score;
+			aSpot[k] = i;
 		}
-		if(Close)
-			continue;
-		vChosen.push_back(Angle);
 	}
-	for(float Angle : vChosen)
+	for(int k = 0; k < Sectors; k++)
+	{
+		if(aSpot[k] < 0)
+			continue;
+		const vec2 Aim = normalize(vSpots[aSpot[k]].m_Hit - Pos) * 100.0f;
 		for(int Dir = -1; Dir <= 1; Dir++)
 			for(int Jump = 0; Jump <= 1; Jump++)
-				vSteps.push_back({Dir, Jump != 0, 2, direction(Angle) * 100.0f});
+				vSteps.push_back({Dir, Jump != 0, 2, Aim});
+	}
 }
 
 // Hint -1: from the finish line
@@ -436,7 +438,7 @@ void CSearch::Log(const char *pFormat, ...)
 }
 
 // the cells around a place as text: # wall, N unhookable, F freeze, D death, u unfreeze, T tele in, O tele out,
-// S start, E finish, h hint, * the way of the bot, @ the place
+// S start, E finish, h hint, * the way of the bot, f its way through freeze, @ the place
 void CSearch::LogGrid(vec2 Center, const std::vector<vec2> &vPath) const
 {
 	const int cx = (int)(Center.x / 32.0f), cy = (int)(Center.y / 32.0f);
@@ -467,7 +469,7 @@ void CSearch::LogGrid(vec2 Center, const std::vector<vec2> &vPath) const
 			else if(x < 0 || y < 0 || x >= m_Job.m_Width || y >= m_Job.m_Height)
 				c = ' ';
 			else if(vOnPath[y * m_Job.m_Width + x])
-				c = '*';
+				c = Freezes(g) || Freezes(f) ? 'f' : '*'; // f: the way goes through freeze there
 			else if(Hint)
 				c = 'h';
 			else if(g == TILE_SOLID)
