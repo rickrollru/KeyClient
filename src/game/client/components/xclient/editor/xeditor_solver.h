@@ -77,10 +77,12 @@ public:
 	int m_TowerDepth = 0;
 	// a softer check: freeze counts only after the middle of the tee was in it for 3 ticks in a row
 	bool m_Forgiving = false;
+	// not a human run: finer inputs and any hook direction, the fastest way the physics allows
+	bool m_Ideal = false;
 };
 
 // a search from the spawn (or start line) to the finish line of the layers; the tiles are copied
-std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {}, int TowerDepth = 0, bool Forgiving = false);
+std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {}, int TowerDepth = 0, bool Forgiving = false, bool Ideal = false);
 } // namespace XcSolver
 
 #endif

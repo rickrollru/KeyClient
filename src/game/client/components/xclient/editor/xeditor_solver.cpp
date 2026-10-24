@@ -619,7 +619,7 @@ void CSearch::Run()
 			TeleIns += !m_Job.m_vTele.empty() && (m_Job.m_vTele[i].m_Type == TILE_TELEIN || m_Job.m_vTele[i].m_Type == TILE_TELEINEVIL);
 		}
 		Log("map %d x %d cells, start at %.0f %.0f, finish cells %d, teleport ins %d\n", m_Job.m_Width, m_Job.m_Height, m_Job.m_Start.x / 32.0f, m_Job.m_Start.y / 32.0f, Finish, TeleIns);
-		Log("hints %d (%s), tower check depth %d, max tries without a new hint %d, %s check\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries, m_Job.m_Forgiving ? "soft" : "strict");
+		Log("hints %d (%s), tower check depth %d, max tries without a new hint %d, %s check%s\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries, m_Job.m_Forgiving ? "soft" : "strict", m_Job.m_Ideal ? ", ideal run (not human)" : "");
 		Log("way through free cells from the start: %.0f cells\n", Heuristic(m_Job.m_Start, 0) >= FAR ? -1.0f : Heuristic(m_Job.m_Start, 0) / 32.0f);
 	}
 	if(Heuristic(m_Job.m_Start, 0) >= FAR)
@@ -661,6 +661,30 @@ void CSearch::Run()
 		for(int Jump = 0; Jump <= 1; Jump++)
 			for(float Angle : aFineAngles)
 				vFineSteps.push_back({Dir, Jump != 0, 2, direction(Angle * pi / 180.0f) * 100.0f});
+	// the ideal run, not a human one: the hook may go in any of 16 directions (24 near freeze) and the input
+	// changes every 2 ticks (every tick near freeze)
+	if(m_Job.m_Ideal)
+	{
+		vSteps.clear();
+		vFineSteps.clear();
+		for(int Dir = -1; Dir <= 1; Dir++)
+			for(int Jump = 0; Jump <= 1; Jump++)
+			{
+				for(std::vector<XcSolver::SStep> *pSteps : {&vSteps, &vFineSteps})
+				{
+					pSteps->push_back({Dir, Jump != 0, 0, vec2(Dir == 0 ? 1.0f : (float)Dir, 0.0f) * 100.0f});
+					pSteps->push_back({Dir, Jump != 0, 1, vec2(0.0f, 0.0f)});
+				}
+				for(int i = 0; i < 16; i++)
+					vSteps.push_back({Dir, Jump != 0, 2, direction(i * 2.0f * pi / 16.0f) * 100.0f});
+				for(int i = 0; i < 24; i++)
+					vFineSteps.push_back({Dir, Jump != 0, 2, direction(i * 2.0f * pi / 24.0f) * 100.0f});
+			}
+	}
+	const int StepTicks = m_Job.m_Ideal ? 2 : STEP_TICKS;
+	const int FineStepTicks = m_Job.m_Ideal ? 1 : FINE_STEP_TICKS;
+	// how much a tick of game time weighs against distance: the ideal run cares more about being fast
+	const float TickWeight = m_Job.m_Ideal ? 12.0f : 5.0f;
 
 	// a deque grows without copying everything over, so a long search does not need twice the memory for a moment
 	std::deque<SNode> vNodes;
@@ -791,7 +815,7 @@ void CSearch::Run()
 			int FreezeTicks = Node.m_State.m_FreezeTicks;
 			int FreezeTouch = Node.m_State.m_FreezeTouch;
 			bool Dead = false, Done = false;
-			const int Ticks = NearFreeze(Node.m_State.m_Pos) ? FINE_STEP_TICKS : STEP_TICKS;
+			const int Ticks = NearFreeze(Node.m_State.m_Pos) ? FineStepTicks : StepTicks;
 			for(int t = 0; t < Ticks && !Dead && !Done; t++)
 			{
 				CNetObj_PlayerInput &Input = Core.m_Input;
@@ -800,7 +824,7 @@ void CSearch::Run()
 				if(Step.m_Hook == 0)
 					Input.m_Hook = 0;
 				else if(Step.m_Hook == 2)
-					Input.m_Hook = t == 0 ? 0 : 1; // let go for a tick, then hook again
+					Input.m_Hook = t == 0 && Node.m_State.m_Input.m_Hook ? 0 : 1; // let go for a tick if held, then hook again
 				if(Step.m_Hook != 1)
 				{
 					Input.m_TargetX = (int)Step.m_Target.x;
@@ -920,7 +944,7 @@ void CSearch::Run()
 			if(Stage == MaxStage && ++AtMaxStage == 48)
 				DropBehind();
 			// mostly towards the finish, a little for being quick
-			Open.push({Distance + Child.m_Steps * 5.0f + vRegionTries[Region(New.m_Pos)] * 4.0f, ChildIndex});
+			Open.push({Distance + Child.m_Steps * TickWeight + vRegionTries[Region(New.m_Pos)] * 4.0f, ChildIndex});
 		}
 		if(Goal >= 0)
 			break;
@@ -964,6 +988,9 @@ void CSearch::Run()
 				N.m_State.m_Vel.x, N.m_State.m_Vel.y, N.m_Step.m_Direction, N.m_Step.m_Jump ? 1 : 0, apHook[std::clamp(N.m_Step.m_Hook, 0, 2)],
 				angle(N.m_Step.m_Target) * 180.0f / pi, N.m_State.m_FreezeTicks, N.m_State.m_HookState == HOOK_GRABBED ? "  (hooked)" : "");
 		}
+		// the time once more at the very end, where it is easy to find
+		const int Ticks = vNodes[Last].m_Steps;
+		Log("\n%s: %d:%05.2f (%d ticks)%s\n", Goal >= 0 ? "TIME" : "time to the best place", Ticks / 3000, (Ticks % 3000) / 50.0f, Ticks, m_Job.m_Ideal ? ", ideal run (not human)" : "");
 	}
 	Result.m_Width = m_Job.m_Width;
 	Result.m_Height = m_Job.m_Height;
@@ -1017,12 +1044,13 @@ void CSearch::Run()
 }
 } // namespace
 
-std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints, int TowerDepth, bool Forgiving)
+std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints, int TowerDepth, bool Forgiving, bool Ideal)
 {
 	auto pJob = std::make_shared<CJob>();
 	pJob->m_vHints = vHints;
 	pJob->m_TowerDepth = TowerDepth;
 	pJob->m_Forgiving = Forgiving;
+	pJob->m_Ideal = Ideal;
 	pJob->m_Width = Width;
 	pJob->m_Height = Height;
 	pJob->m_vGame.assign(pGame, pGame + (size_t)Width * Height);

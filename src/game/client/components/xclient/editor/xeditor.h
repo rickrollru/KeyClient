@@ -349,13 +349,16 @@ private:
 	XcSolver::SResult m_SolveResult; // the last result: heat map, room along the way, tower spots
 	bool m_ShowHeat = false;
 	int m_SolveTowerDepth = 0; // the running search looks for tower skips
+	char m_aSolveSummary[160] = ""; // the time of the last run, shown over the map while its way is shown
+	bool m_SolveIdeal = false; // the running search is the ideal (not human) run
+	int m_SolveHumanTicks = -1; // the time of the last finished human-like run, to compare with the ideal one
 	const char *m_pSolveTowerLevel = "";
 	// help for the bot: points the way passes in order, set by clicks while the mode is on
 	std::vector<vec2> m_vSolveHints;
 	bool m_HintMode = false;
 	void RenderSolveHints();
 	void RenderSolveHeat();
-	void StartSolve(int TowerDepth = 0, const char *pLevel = "", bool Forgiving = false);
+	void StartSolve(int TowerDepth = 0, const char *pLevel = "", bool Forgiving = false, bool Ideal = false);
 	void UpdateSolve();
 	void RenderSolvePath();
 

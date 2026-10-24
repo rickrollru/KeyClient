@@ -399,7 +399,7 @@ static void FormatRaceTime(char *pBuf, int Size, int Ticks)
 	str_format(pBuf, Size, "%d:%02d.%02d", Centis / 6000, (Centis / 100) % 60, Centis % 100);
 }
 
-void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel, bool Forgiving)
+void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel, bool Forgiving, bool Ideal)
 {
 	CEditor &E = *m_pEditor;
 	const std::shared_ptr<CLayerGame> &pGame = E.Map()->m_pGameLayer;
@@ -408,7 +408,8 @@ void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel, bool Forgiving)
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
 	const std::shared_ptr<CLayerTele> &pTele = E.Map()->m_pTeleLayer;
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 250000, m_vSolveHints, TowerDepth, Forgiving);
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 250000, m_vSolveHints, TowerDepth, Forgiving, Ideal);
+	m_SolveIdeal = Ideal;
 	m_SolveTowerDepth = TowerDepth;
 	m_pSolveTowerLevel = pLevel;
 	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)
@@ -439,14 +440,32 @@ void CXcEditorUi::UpdateSolve()
 	}
 	m_vSolvePath = Result.m_vPath;
 	m_SolveFound = Result.m_Found;
+	if(Result.m_Found && !m_SolveIdeal)
+		m_SolveHumanTicks = Result.m_Ticks;
 	char aMsg[256];
 	char aTime[32];
 	FormatRaceTime(aTime, sizeof(aTime), Result.m_Ticks);
-	if(Result.m_Found)
+	if(Result.m_Found && m_SolveIdeal)
+	{
+		if(m_SolveHumanTicks > 0)
+		{
+			char aHuman[32];
+			FormatRaceTime(aHuman, sizeof(aHuman), m_SolveHumanTicks);
+			str_format(aMsg, sizeof(aMsg), Tr("Ideal run: %s (the human-like bot: %s)"), aTime, aHuman);
+		}
+		else
+			str_format(aMsg, sizeof(aMsg), Tr("Ideal run: %s"), aTime);
+	}
+	else if(Result.m_Found)
 		str_format(aMsg, sizeof(aMsg), Tr("The bot finished in %s: %d hooks, %d jumps"), aTime, Result.m_Hooks, Result.m_Jumps);
 	else
 		str_format(aMsg, sizeof(aMsg), Tr("The bot found no way (%d tries). It got to the red mark in %s"), Result.m_Explored, aTime);
 	XcUi::Toast(aMsg, Result.m_Found ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
+	// the toast goes away: the time stays written over the map
+	if(Result.m_Found)
+		str_format(m_aSolveSummary, sizeof(m_aSolveSummary), m_SolveIdeal ? Tr("Ideal run: %s") : Tr("The bot finished in %s"), aTime);
+	else
+		str_format(m_aSolveSummary, sizeof(m_aSolveSummary), Tr("The bot got to the red mark in %s"), aTime);
 	// the length of the way in cells
 	float Length = 0.0f;
 	for(size_t i = 1; i < Result.m_vPath.size(); i++)
@@ -605,6 +624,19 @@ void CXcEditorUi::RenderSolvePath()
 	}
 	if(m_vSolvePath.size() < 2)
 		return;
+	if(m_aSolveSummary[0])
+	{
+		E.Ui()->MapScreen();
+		const CUIRect Screen = *E.Ui()->Screen();
+		const float FontSize = 12.0f;
+		const float Width = E.TextRender()->TextWidth(FontSize, m_aSolveSummary);
+		if(m_SolveFound)
+			E.TextRender()->TextColor(0.45f, 1.0f, 0.65f, 1.0f);
+		else
+			E.TextRender()->TextColor(1.0f, 0.65f, 0.3f, 1.0f);
+		E.TextRender()->Text(Screen.w * 0.5f - Width * 0.5f, 34.0f, FontSize, m_aSolveSummary);
+		E.TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+	}
 	if(m_ShowHeat && !m_SolveResult.m_vHeat.empty())
 	{
 		RenderSolveHeat();
