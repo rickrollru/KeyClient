@@ -45,6 +45,7 @@ struct SNode
 	int m_Parent;
 	XcSolver::SStep m_Step;
 	int m_Steps;
+	int m_Stage; // hints passed
 };
 
 void Save(const CCharacterCore &Core, SState &State)
@@ -94,7 +95,9 @@ public:
 private:
 	XcSolver::CJob &m_Job;
 	CCollision m_Collision;
-	std::vector<float> m_vDistance; // way to the finish through free cells, in pixels
+	// the way through free cells, in pixels: to each hint and the last one to the finish
+	std::vector<std::vector<float>> m_vvFields;
+	std::vector<float> m_vRest; // from reaching target k on: the way left after it
 
 	int Tile(const std::vector<CTile> &vTiles, int x, int y) const
 	{
@@ -123,25 +126,42 @@ private:
 				return true;
 		return false;
 	}
-	float Heuristic(vec2 Pos) const
+	float Field(int Target, vec2 Pos) const
 	{
 		const int x = std::clamp((int)(Pos.x / 32.0f), 0, m_Job.m_Width - 1), y = std::clamp((int)(Pos.y / 32.0f), 0, m_Job.m_Height - 1);
-		return m_vDistance[y * m_Job.m_Width + x];
+		return m_vvFields[Target][y * m_Job.m_Width + x];
 	}
-	void BuildDistance();
+	float Heuristic(vec2 Pos, int Stage) const
+	{
+		float Value = Field(Stage, Pos);
+		// a hint in a wall or behind one: straight to it
+		if(Value >= FAR && Stage < (int)m_Job.m_vHints.size())
+			Value = distance(Pos, m_Job.m_vHints[Stage]);
+		return Value >= FAR ? FAR : Value + m_vRest[Stage];
+	}
+	void BuildField(std::vector<float> &vField, int Hint);
 };
 
-void CSearch::BuildDistance()
+// Hint -1: from the finish line
+void CSearch::BuildField(std::vector<float> &vDistance, int Hint)
 {
 	const int w = m_Job.m_Width, h = m_Job.m_Height;
-	m_vDistance.assign((size_t)w * h, FAR);
+	vDistance.assign((size_t)w * h, FAR);
 	std::deque<int> Queue;
-	for(int i = 0; i < w * h; i++)
-		if(m_Job.m_vGame[i].m_Index == TILE_FINISH || (!m_Job.m_vFront.empty() && m_Job.m_vFront[i].m_Index == TILE_FINISH))
-		{
-			m_vDistance[i] = 0.0f;
-			Queue.push_back(i);
-		}
+	if(Hint >= 0)
+	{
+		const vec2 Pos = m_Job.m_vHints[Hint];
+		const int i = std::clamp((int)(Pos.y / 32.0f), 0, h - 1) * w + std::clamp((int)(Pos.x / 32.0f), 0, w - 1);
+		vDistance[i] = 0.0f;
+		Queue.push_back(i);
+	}
+	else
+		for(int i = 0; i < w * h; i++)
+			if(m_Job.m_vGame[i].m_Index == TILE_FINISH || (!m_Job.m_vFront.empty() && m_Job.m_vFront[i].m_Index == TILE_FINISH))
+			{
+				vDistance[i] = 0.0f;
+				Queue.push_back(i);
+			}
 	auto Free = [&](int x, int y) {
 		const int Game = Tile(m_Job.m_vGame, x, y), Front = Tile(m_Job.m_vFront, x, y);
 		return Game != TILE_SOLID && Game != TILE_NOHOOK && !Deadly(Game) && !Deadly(Front);
@@ -158,9 +178,9 @@ void CSearch::BuildDistance()
 			if(nx < 0 || ny < 0 || nx >= w || ny >= h || !Free(nx, ny))
 				continue;
 			const int n = ny * w + nx;
-			if(m_vDistance[n] <= m_vDistance[i] + 32.0f)
+			if(vDistance[n] <= vDistance[i] + 32.0f)
 				continue;
-			m_vDistance[n] = m_vDistance[i] + 32.0f;
+			vDistance[n] = vDistance[i] + 32.0f;
 			Queue.push_back(n);
 		}
 	}
@@ -170,8 +190,18 @@ void CSearch::Run()
 {
 	XcSolver::SResult &Result = m_Job.m_Result;
 	m_Collision.XcInitTiles(m_Job.m_vGame.data(), m_Job.m_vFront.empty() ? nullptr : m_Job.m_vFront.data(), m_Job.m_Width, m_Job.m_Height);
-	BuildDistance();
-	if(Heuristic(m_Job.m_Start) >= FAR)
+	const int NumHints = (int)m_Job.m_vHints.size();
+	m_vvFields.resize(NumHints + 1);
+	for(int k = 0; k < NumHints; k++)
+		BuildField(m_vvFields[k], k);
+	BuildField(m_vvFields[NumHints], -1);
+	m_vRest.assign(NumHints + 1, 0.0f);
+	for(int k = NumHints - 1; k >= 0; k--)
+	{
+		const float Next = Field(k + 1, m_Job.m_vHints[k]);
+		m_vRest[k] = m_vRest[k + 1] + (Next >= FAR ? (k + 1 < NumHints ? distance(m_Job.m_vHints[k], m_Job.m_vHints[k + 1]) : 0.0f) : Next);
+	}
+	if(Heuristic(m_Job.m_Start, 0) >= FAR)
 	{
 		// the finish cannot be reached through free cells at all
 		m_Collision.Unload();
@@ -208,11 +238,12 @@ void CSearch::Run()
 	Root.m_Parent = -1;
 	Root.m_Step = {0, false, 0, vec2(100.0f, 0.0f)};
 	Root.m_Steps = 0;
+	Root.m_Stage = 0;
 	vNodes.push_back(Root);
 
 	using TEntry = std::pair<float, int>;
 	std::priority_queue<TEntry, std::vector<TEntry>, std::greater<>> Open;
-	Open.push({Heuristic(m_Job.m_Start), 0});
+	Open.push({Heuristic(m_Job.m_Start, 0), 0});
 	std::unordered_set<uint64_t> Seen;
 	float BestDistance = FAR;
 	int BestNode = 0;
@@ -286,6 +317,11 @@ void CSearch::Run()
 			Key = Key << 8 | ((uint64_t)(int)(New.m_Vel.y / 2.0f + 128.0f) & 0xff);
 			Key = Key << 4 | (uint64_t)(New.m_HookState & 0xf);
 			Key = Key << 2 | (uint64_t)(New.m_Jumped & 3);
+			// a hint reached: the next one is the target
+			int Stage = Node.m_Stage;
+			while(Stage < (int)m_Job.m_vHints.size() && distance(New.m_Pos, m_Job.m_vHints[Stage]) < 48.0f)
+				Stage++;
+			Key ^= (uint64_t)Stage * 0x9e3779b97f4a7c15ull;
 			if(New.m_HookState == HOOK_GRABBED)
 				Key ^= ((uint64_t)(int)(New.m_HookPos.x / 16.0f) * 2654435761ull) ^ ((uint64_t)(int)(New.m_HookPos.y / 16.0f) * 40503ull);
 			if(!Seen.insert(Key).second)
@@ -295,6 +331,7 @@ void CSearch::Run()
 			Child.m_Parent = Index;
 			Child.m_Step = Step;
 			Child.m_Steps = Node.m_Steps + 1;
+			Child.m_Stage = Stage;
 			vNodes.push_back(Child);
 			const int ChildIndex = (int)vNodes.size() - 1;
 			if(Done)
@@ -302,7 +339,7 @@ void CSearch::Run()
 				Goal = ChildIndex;
 				break;
 			}
-			const float Distance = Heuristic(New.m_Pos);
+			const float Distance = Heuristic(New.m_Pos, Stage);
 			if(Distance >= FAR)
 				continue;
 			if(Distance < BestDistance)
@@ -337,9 +374,10 @@ void CSearch::Run()
 }
 } // namespace
 
-std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, int Width, int Height, int MaxTries)
+std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints)
 {
 	auto pJob = std::make_shared<CJob>();
+	pJob->m_vHints = vHints;
 	pJob->m_Width = Width;
 	pJob->m_Height = Height;
 	pJob->m_vGame.assign(pGame, pGame + (size_t)Width * Height);

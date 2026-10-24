@@ -346,6 +346,10 @@ private:
 	std::shared_ptr<XcSolver::CJob> m_pSolveJob;
 	std::vector<vec2> m_vSolvePath;
 	bool m_SolveFound = false;
+	// help for the bot: points the way passes in order, set by clicks while the mode is on
+	std::vector<vec2> m_vSolveHints;
+	bool m_HintMode = false;
+	void RenderSolveHints();
 	void StartSolve();
 	void UpdateSolve();
 	void RenderSolvePath();

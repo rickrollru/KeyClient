@@ -745,6 +745,8 @@ namespace XcUi
 			{"No servers found", "Серверы не найдены"},
 			{"Asking the master servers for the list", "Запрашиваю список у мастер-серверов"},
 			{"Try another filter or refresh the list", "Попробуй другой фильтр или обнови список"},
+			{"Bot: place hints (left click adds, right click removes)", "Бот: расставить подсказки (ЛКМ — добавить, ПКМ — убрать)"},
+			{"Bot: clear the hints", "Бот: убрать подсказки"},
 			{"Bot: stop", "Бот: остановить"},
 			{"The bot is searching: %d tries", "Бот ищет: %d попыток"},
 			{"Bot: find the way to the finish", "Бот: найти путь до финиша"},

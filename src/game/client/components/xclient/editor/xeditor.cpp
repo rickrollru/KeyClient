@@ -455,6 +455,15 @@ void CXcEditorUi::Render()
 
 		const ImGuiIO &Io = ImGui::GetIO();
 		m_WantsMouse = Io.WantCaptureMouse && !ClassicBusy;
+		// hints for the bot: clicks on the map add and remove them instead of drawing
+		if(m_HintMode && E.m_Mode == MODE_LAYERS && !Io.WantCaptureMouse && E.Ui()->MouseInside(&m_View))
+		{
+			if(ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+				m_vSolveHints.push_back(E.MapView()->MouseWorldPos());
+			else if(ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_vSolveHints.empty())
+				m_vSolveHints.pop_back();
+			m_WantsMouse = true;
+		}
 		HandleTyping();
 		// Esc closes the menus and stops typing before it can close the editor
 		if(PopupOpenAtStart || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || m_Typing || m_TypingLastFrame)
@@ -898,6 +907,10 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					StartSolve();
 				if(m_pSolveJob && ImGui::MenuItem(Tr("Bot: stop")))
 					m_pSolveJob->m_Cancel = true;
+				if(ImGui::MenuItem(Tr("Bot: place hints (left click adds, right click removes)"), nullptr, m_HintMode))
+					m_HintMode = !m_HintMode;
+				if(!m_vSolveHints.empty() && ImGui::MenuItem(Tr("Bot: clear the hints")))
+					m_vSolveHints.clear();
 				if(!m_vSolvePath.empty() && ImGui::MenuItem(Tr("Bot: hide the way")))
 					m_vSolvePath.clear();
 				ImGui::Separator();

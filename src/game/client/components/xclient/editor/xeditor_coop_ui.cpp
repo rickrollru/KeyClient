@@ -398,7 +398,7 @@ void CXcEditorUi::StartSolve()
 		return;
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, 200000);
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, 200000, m_vSolveHints);
 	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)
 	{
 		XcUi::Toast(Tr("The bot needs a spawn (or a start line) and a finish line in the game layer"), XcUi::TOAST_ERROR);
@@ -424,9 +424,49 @@ void CXcEditorUi::UpdateSolve()
 	m_pSolveJob.reset();
 }
 
+void CXcEditorUi::RenderSolveHints()
+{
+	if(m_vSolveHints.empty())
+		return;
+	CEditor &E = *m_pEditor;
+	CLayerGroup *pGroup = nullptr;
+	for(const auto &pG : E.Map()->m_vpGroups)
+		if(pG->m_GameGroup)
+			pGroup = pG.get();
+	if(!pGroup)
+		return;
+	pGroup->MapScreen();
+	IGraphics *pGraphics = E.Graphics();
+	pGraphics->TextureClear();
+	pGraphics->LinesBegin();
+	pGraphics->SetColor(0.45f, 0.75f, 1.0f, 0.6f);
+	for(size_t i = 0; i + 1 < m_vSolveHints.size(); i++)
+	{
+		const IGraphics::CLineItem Line(m_vSolveHints[i].x, m_vSolveHints[i].y, m_vSolveHints[i + 1].x, m_vSolveHints[i + 1].y);
+		pGraphics->LinesDraw(&Line, 1);
+	}
+	pGraphics->LinesEnd();
+	pGraphics->QuadsBegin();
+	pGraphics->SetColor(0.45f, 0.75f, 1.0f, 0.9f);
+	for(const vec2 &Pos : m_vSolveHints)
+	{
+		const IGraphics::CQuadItem Quad(Pos.x - 10.0f, Pos.y - 10.0f, 20.0f, 20.0f);
+		pGraphics->QuadsDrawTL(&Quad, 1);
+	}
+	pGraphics->QuadsEnd();
+	for(size_t i = 0; i < m_vSolveHints.size(); i++)
+	{
+		char aNumber[8];
+		str_format(aNumber, sizeof(aNumber), "%d", (int)i + 1);
+		E.TextRender()->Text(m_vSolveHints[i].x - 6.0f, m_vSolveHints[i].y - 9.0f, 16.0f, aNumber);
+	}
+	E.Ui()->MapScreen();
+}
+
 void CXcEditorUi::RenderSolvePath()
 {
 	CEditor &E = *m_pEditor;
+	RenderSolveHints();
 	if(m_pSolveJob && !m_pSolveJob->m_Done)
 	{
 		// while it searches: the tried places as faint dots, the best way so far in yellow, and the count
