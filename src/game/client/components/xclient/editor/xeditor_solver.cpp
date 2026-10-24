@@ -170,7 +170,7 @@ private:
 		return Tile.m_Type ? &Tile : nullptr;
 	}
 	// one tick along the way of the middle of the tee, like the server: freeze, teleports, the finish
-	void HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, int &FreezeTicks, bool &Dead, bool &Done) const;
+	void HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, int &FreezeTicks, bool &Unfrozen, bool &Dead, bool &Done) const;
 	std::vector<uint8_t> m_vNearFreeze; // freeze or death within two cells
 	bool NearFreeze(vec2 Pos) const
 	{
@@ -254,7 +254,7 @@ void CSearch::BuildTeles()
 	}
 }
 
-void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, int &FreezeTicks, bool &Dead, bool &Done) const
+void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, int &FreezeTicks, bool &Unfrozen, bool &Dead, bool &Done) const
 {
 	const vec2 To = Core.m_Pos;
 	const int Num = (int)(distance(From, To) / 8.0f) + 1;
@@ -267,7 +267,10 @@ void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, 
 			return;
 		}
 		if(UnfreezeAt(Pos))
+		{
+			Unfrozen = FreezeTicks > 0;
 			FreezeTicks = 0;
+		}
 		else if(FreezeAt(Pos))
 			FreezeTicks = FREEZE_TICKS;
 		if(FinishAt(Pos))
@@ -658,9 +661,15 @@ void CSearch::Run()
 					Dead = true;
 				else
 				{
+					const bool WasFrozen = FreezeTicks > 0;
 					if(FreezeTicks > 0)
 						FreezeTicks--;
-					HandleTiles(PrevPos, Core, TeleCheckpoint, FreezeTicks, Dead, Done);
+					bool Unfrozen = false;
+					HandleTiles(PrevPos, Core, TeleCheckpoint, FreezeTicks, Unfrozen, Dead, Done);
+					// freeze is passed only when an unfreeze tile ends it on the way (maps made like that); thawing
+					// out by waiting 3 s after falling through freeze is a skip, not the way
+					if(WasFrozen && FreezeTicks == 0 && !Unfrozen)
+						Dead = true;
 					// frozen and come to rest in the freeze: stuck for good
 					if(FreezeTicks > 0 && length(Core.m_Vel) < 0.5f && FreezeAt(Core.m_Pos))
 						Dead = true;
