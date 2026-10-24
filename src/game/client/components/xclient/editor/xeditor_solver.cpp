@@ -24,6 +24,7 @@ constexpr int STEP_TICKS = 5;
 // near freeze every 2 ticks: dropping into a narrow shaft lined with freeze needs that precision
 constexpr int FINE_STEP_TICKS = 2;
 constexpr int MAX_TICKS = 50 * 60 * 10; // ten minutes
+constexpr size_t MAX_NODES = 6000000; // places kept for the way back: about 1 GB
 constexpr int FREEZE_TICKS = 50 * 3; // sv_freeze_delay
 constexpr float FAR = 1e9f;
 
@@ -618,7 +619,7 @@ void CSearch::Run()
 			TeleIns += !m_Job.m_vTele.empty() && (m_Job.m_vTele[i].m_Type == TILE_TELEIN || m_Job.m_vTele[i].m_Type == TILE_TELEINEVIL);
 		}
 		Log("map %d x %d cells, start at %.0f %.0f, finish cells %d, teleport ins %d\n", m_Job.m_Width, m_Job.m_Height, m_Job.m_Start.x / 32.0f, m_Job.m_Start.y / 32.0f, Finish, TeleIns);
-		Log("hints %d (%s), tower check depth %d, max tries %d, %s check\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries, m_Job.m_Forgiving ? "soft" : "strict");
+		Log("hints %d (%s), tower check depth %d, max tries without a new hint %d, %s check\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries, m_Job.m_Forgiving ? "soft" : "strict");
 		Log("way through free cells from the start: %.0f cells\n", Heuristic(m_Job.m_Start, 0) >= FAR ? -1.0f : Heuristic(m_Job.m_Start, 0) / 32.0f);
 	}
 	if(Heuristic(m_Job.m_Start, 0) >= FAR)
@@ -661,8 +662,8 @@ void CSearch::Run()
 			for(float Angle : aFineAngles)
 				vFineSteps.push_back({Dir, Jump != 0, 2, direction(Angle * pi / 180.0f) * 100.0f});
 
-	std::vector<SNode> vNodes;
-	vNodes.reserve(1 << 16);
+	// a deque grows without copying everything over, so a long search does not need twice the memory for a moment
+	std::deque<SNode> vNodes;
 	SNode Root;
 	Save(Core, Root.m_State);
 	Root.m_Parent = -1;
@@ -702,8 +703,17 @@ void CSearch::Run()
 		std::fill(vRegionTries.begin(), vRegionTries.end(), 0);
 	};
 
-	while((!Open.empty() || !vReserve.empty()) && Result.m_Explored < m_Job.m_MaxTries && !m_Job.m_Cancel)
+	// the limit counts the tries since the last new hint: a long map that goes on step by step is never cut
+	// short, only a search that is stuck for long stops
+	int SinceProgress = 0;
+	const char *pStopReason = "every try ended in a dead end";
+	while((!Open.empty() || !vReserve.empty()) && !m_Job.m_Cancel)
 	{
+		if(SinceProgress >= m_Job.m_MaxTries)
+		{
+			pStopReason = "no new hint for too long";
+			break;
+		}
 		if(Open.empty())
 		{
 			for(const TEntry &Entry : vReserve)
@@ -720,6 +730,7 @@ void CSearch::Run()
 		}
 		Open.pop();
 		Result.m_Explored++;
+		SinceProgress++;
 		const SNode Node = vNodes[Index];
 		vRegionTries[Region(Node.m_State.m_Pos)]++;
 		if(++SinceStage > 25000 && SkipStage <= MaxStage && MaxStage < (int)m_Job.m_vHints.size())
@@ -754,8 +765,11 @@ void CSearch::Run()
 				m_Job.m_vLiveTried.push_back(Node.m_State.m_Pos);
 		}
 		// far too many places kept: the memory would run out
-		if(vNodes.size() > 2500000)
+		if(vNodes.size() > MAX_NODES)
+		{
+			pStopReason = "out of memory for places";
 			break;
+		}
 		if(Node.m_Steps >= MAX_TICKS)
 			continue;
 		const bool Hooking = Node.m_State.m_HookState != HOOK_IDLE && Node.m_State.m_HookState != HOOK_RETRACTED;
@@ -901,6 +915,7 @@ void CSearch::Run()
 				MaxStage = Stage;
 				AtMaxStage = 0;
 				SinceStage = 0;
+				SinceProgress = 0;
 			}
 			if(Stage == MaxStage && ++AtMaxStage == 48)
 				DropBehind();
@@ -929,6 +944,8 @@ void CSearch::Run()
 	Result.m_Ticks = vNodes[Last].m_Steps;
 	{
 		Log("\nresult: %s after %d tries%s\n", Goal >= 0 ? "FINISHED" : "no way", Result.m_Explored, m_Job.m_Cancel ? " (stopped)" : "");
+		if(Goal < 0 && !m_Job.m_Cancel)
+			Log("why it stopped: %s (places kept %d)\n", pStopReason, (int)vNodes.size());
 		Log("best place %.0f %.0f, game time %.2f s, hints passed %d of %d\n", vNodes[Last].m_State.m_Pos.x / 32.0f, vNodes[Last].m_State.m_Pos.y / 32.0f, vNodes[Last].m_Steps / 50.0f, vNodes[Last].m_Stage, (int)m_Job.m_vHints.size());
 		Log("tries ended by: death tile %d, out of the map %d, thawed without unfreeze %d, stuck in freeze %d\n", m_aEnds[END_DEATH], m_aEnds[END_OUT], m_aEnds[END_THAW], m_aEnds[END_STUCK]);
 		Log("\nthe cells around the best place:\n");

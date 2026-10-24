@@ -72,7 +72,7 @@ public:
 	std::vector<CTeleTile> m_vTele; // empty without a tele layer
 	vec2 m_Start;
 	std::vector<vec2> m_vHints; // points the way has to pass, in this order, before the finish
-	int m_MaxTries = 200000;
+	int m_MaxTries = 200000; // tries without a new hint before giving up
 	// tower skip check: frozen tees lie in freeze pits up to this many cells deep (0: off)
 	int m_TowerDepth = 0;
 	// a softer check: freeze counts only after the middle of the tee was in it for 3 ticks in a row
