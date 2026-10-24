@@ -391,6 +391,13 @@ void CSearch::Run()
 	// a few dozen different states per cell are enough: more only digs deeper into the same dead end and
 	// uses up the tries, then the search has to look elsewhere
 	std::vector<uint16_t> vPerCell((size_t)m_Job.m_Width * m_Job.m_Height * 4, 0);
+	// tiredness of a place: tries spent in each 4 x 4 cells make it less inviting, so the search climbs out of
+	// a pocket that only looks close to the finish and goes on elsewhere
+	const int RegionW = m_Job.m_Width / 4 + 1, RegionH = m_Job.m_Height / 4 + 1;
+	std::vector<uint32_t> vRegionTries((size_t)RegionW * RegionH, 0);
+	auto Region = [&](vec2 Pos) {
+		return std::clamp((int)(Pos.y / 128.0f), 0, RegionH - 1) * RegionW + std::clamp((int)(Pos.x / 128.0f), 0, RegionW - 1);
+	};
 	float BestDistance = FAR;
 	int BestNode = 0;
 	int Goal = -1;
@@ -401,6 +408,7 @@ void CSearch::Run()
 		Open.pop();
 		Result.m_Explored++;
 		const SNode Node = vNodes[Index];
+		vRegionTries[Region(Node.m_State.m_Pos)]++;
 		if((Result.m_Explored & 255) == 0)
 		{
 			m_Job.m_Progress = Result.m_Explored;
@@ -526,7 +534,7 @@ void CSearch::Run()
 				BestNode = ChildIndex;
 			}
 			// mostly towards the finish, a little for being quick
-			Open.push({Distance + Child.m_Steps * 5.0f, ChildIndex});
+			Open.push({Distance + Child.m_Steps * 5.0f + vRegionTries[Region(New.m_Pos)] * 4.0f, ChildIndex});
 		}
 		if(Goal >= 0)
 			break;
