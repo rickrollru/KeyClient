@@ -652,6 +652,14 @@ void CSearch::Run()
 			for(float Angle : aAngles)
 				vSteps.push_back({Dir, Jump != 0, 2, direction(Angle * pi / 180.0f) * 100.0f});
 		}
+	// near freeze also the directions in between: a tunnel with freeze above and below is crossed hanging on one
+	// block at the right angle (seen in a report on 70s)
+	std::vector<XcSolver::SStep> vFineSteps = vSteps;
+	const float aFineAngles[] = {-15.0f, -45.0f, -75.0f, -105.0f, -135.0f, -165.0f};
+	for(int Dir = -1; Dir <= 1; Dir++)
+		for(int Jump = 0; Jump <= 1; Jump++)
+			for(float Angle : aFineAngles)
+				vFineSteps.push_back({Dir, Jump != 0, 2, direction(Angle * pi / 180.0f) * 100.0f});
 
 	std::vector<SNode> vNodes;
 	vNodes.reserve(1 << 16);
@@ -755,13 +763,14 @@ void CSearch::Run()
 		const vec2 Feet = Node.m_State.m_Pos + vec2(0.0f, 14.0f + 5.0f);
 		const bool Grounded = m_Collision.CheckPoint(Feet.x - 7.0f, Feet.y) || m_Collision.CheckPoint(Feet.x + 7.0f, Feet.y);
 		const bool CanJump = Grounded || !(Node.m_State.m_Jumped & 2);
-		for(const XcSolver::SStep &Step : vSteps)
+		const std::vector<XcSolver::SStep> &vNodeSteps = NearFreeze(Node.m_State.m_Pos) ? vFineSteps : vSteps;
+		for(const XcSolver::SStep &Step : vNodeSteps)
 		{
 			if(Step.m_Hook == 1 && !Hooking)
 				continue; // nothing to hold
 			if(Step.m_Jump && !CanJump)
 				continue;
-			if(Node.m_State.m_FreezeTicks > 0 && &Step != &vSteps[0])
+			if(Node.m_State.m_FreezeTicks > 0 && &Step != &vNodeSteps[0])
 				continue; // frozen: the input does nothing, one way is enough
 			Load(Core, Node.m_State);
 			int TeleCheckpoint = Node.m_State.m_TeleCheckpoint;
