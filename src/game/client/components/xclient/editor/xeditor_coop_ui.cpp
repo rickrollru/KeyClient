@@ -408,7 +408,7 @@ void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel, bool Forgiving,
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
 	const std::shared_ptr<CLayerTele> &pTele = E.Map()->m_pTeleLayer;
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 250000, m_vSolveHints, TowerDepth, Forgiving, Ideal);
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 150000, m_vSolveHints, TowerDepth, Forgiving, Ideal);
 	m_SolveIdeal = Ideal;
 	m_SolveTowerDepth = TowerDepth;
 	m_pSolveTowerLevel = pLevel;
@@ -456,13 +456,17 @@ void CXcEditorUi::UpdateSolve()
 		else
 			str_format(aMsg, sizeof(aMsg), Tr("Ideal run: %s"), aTime);
 	}
+	else if(Result.m_Found && !Result.m_vStuck.empty())
+		str_format(aMsg, sizeof(aMsg), Tr("The bot got to the finish, but could not pass %d places (red marks): it went on after them"), (int)Result.m_vStuck.size());
 	else if(Result.m_Found)
 		str_format(aMsg, sizeof(aMsg), Tr("The bot finished in %s: %d hooks, %d jumps"), aTime, Result.m_Hooks, Result.m_Jumps);
 	else
 		str_format(aMsg, sizeof(aMsg), Tr("The bot found no way (%d tries). It got to the red mark in %s"), Result.m_Explored, aTime);
-	XcUi::Toast(aMsg, Result.m_Found ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
+	XcUi::Toast(aMsg, Result.m_Found && Result.m_vStuck.empty() ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
 	// the toast goes away: the time stays written over the map
-	if(Result.m_Found)
+	if(Result.m_Found && !Result.m_vStuck.empty())
+		str_format(m_aSolveSummary, sizeof(m_aSolveSummary), Tr("The bot got to the finish, %d places not passed (red marks); time without them %s"), (int)Result.m_vStuck.size(), aTime);
+	else if(Result.m_Found)
 		str_format(m_aSolveSummary, sizeof(m_aSolveSummary), m_SolveIdeal ? Tr("Ideal run: %s") : Tr("The bot finished in %s"), aTime);
 	else
 		str_format(m_aSolveSummary, sizeof(m_aSolveSummary), Tr("The bot got to the red mark in %s"), aTime);
@@ -653,12 +657,28 @@ void CXcEditorUi::RenderSolvePath()
 	pGraphics->TextureClear();
 	pGraphics->LinesBegin();
 	pGraphics->SetColor(m_SolveFound ? ColorRGBA(0.35f, 1.0f, 0.6f, 0.95f) : ColorRGBA(1.0f, 0.65f, 0.25f, 0.95f));
+	const std::vector<int> &vBreaks = m_SolveResult.m_vBreaks;
 	for(size_t i = 0; i + 1 < m_vSolvePath.size(); i++)
 	{
+		// no line over a place the bot could not pass: the next piece starts after it
+		if(std::find(vBreaks.begin(), vBreaks.end(), (int)i + 1) != vBreaks.end())
+			continue;
 		const IGraphics::CLineItem Line(m_vSolvePath[i].x, m_vSolvePath[i].y, m_vSolvePath[i + 1].x, m_vSolvePath[i + 1].y);
 		pGraphics->LinesDraw(&Line, 1);
 	}
 	pGraphics->LinesEnd();
+	// the places it could not pass
+	if(!m_SolveResult.m_vStuck.empty())
+	{
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(1.0f, 0.25f, 0.25f, 0.9f);
+		for(const vec2 &Pos : m_SolveResult.m_vStuck)
+		{
+			const IGraphics::CQuadItem Quad(Pos.x - 8.0f, Pos.y - 8.0f, 16.0f, 16.0f);
+			pGraphics->QuadsDrawTL(&Quad, 1);
+		}
+		pGraphics->QuadsEnd();
+	}
 	if(!m_SolveFound)
 	{
 		// the farthest point it reached

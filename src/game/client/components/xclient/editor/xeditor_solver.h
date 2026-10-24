@@ -44,6 +44,10 @@ struct SResult
 	std::vector<uint8_t> m_vRoom;
 	// tower skips: cells of frozen tees the way stood on or hooked
 	std::vector<vec2> m_vTowerSpots;
+	// the way is made of pieces when the bot could not pass a place and went on after it: where each piece starts
+	// in m_vPath, and the places it could not pass
+	std::vector<int> m_vBreaks;
+	std::vector<vec2> m_vStuck;
 	// the hints set along the route when the mapper gave none
 	std::vector<vec2> m_vAutoHints;
 	// a text report of the search for the mapper to send: hints reached, why tries ended, the place it stopped

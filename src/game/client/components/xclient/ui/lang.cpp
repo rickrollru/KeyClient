@@ -745,6 +745,8 @@ namespace XcUi
 			{"No servers found", "Серверы не найдены"},
 			{"Asking the master servers for the list", "Запрашиваю список у мастер-серверов"},
 			{"Try another filter or refresh the list", "Попробуй другой фильтр или обнови список"},
+			{"The bot got to the finish, but could not pass %d places (red marks): it went on after them", "Бот дошёл до финиша, но не смог пройти мест: %d (красные метки) — продолжал после них"},
+			{"The bot got to the finish, %d places not passed (red marks); time without them %s", "Бот дошёл до финиша, не пройдено мест: %d (красные метки); время без них %s"},
 			{"Ideal route through the hints (no physics, just the line)", "Идеальный маршрут по точкам (без физики, просто линия)"},
 			{"Hide the ideal route", "Скрыть идеальный маршрут"},
 			{"No free way to hint %d: walls or freeze close it off", "Нет свободного пути к точке %d: мешают стены или фриз"},

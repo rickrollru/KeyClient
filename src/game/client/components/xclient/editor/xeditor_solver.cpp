@@ -1144,6 +1144,202 @@ void CSearch::Run()
 }
 } // namespace
 
+// several searches with different settings at once, one per core (the search gets far with one setting and
+// stuck early with another, differently on each map); the best result wins. Blocks until they are done; the
+// job only gives them the map, shows the way of the one furthest along live and can stop them.
+static XcSolver::SResult RunSearches(XcSolver::CJob &Job, vec2 Start, const std::vector<vec2> &vHints, std::string &Summary)
+{
+	using namespace XcSolver;
+	std::vector<SVariant> vVariants;
+	{
+		SVariant V;
+		vVariants.push_back(V); // 100 / 500, aimed all around
+		V.m_Cap = 300;
+		V.m_CapFreeze = 1500;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Cap = 40;
+		V.m_CapFreeze = 160;
+		V.m_Aim = 8;
+		V.m_AimFreeze = 12;
+		V.m_AimAround = false;
+		V.m_WideFixed = false;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Cap = 200;
+		V.m_CapFreeze = 800;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Aim = 8;
+		V.m_AimFreeze = 12;
+		V.m_AimAround = false;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Cap = 300;
+		V.m_CapFreeze = 1500;
+		V.m_TickWeight = 2.0f;
+		vVariants.push_back(V);
+	}
+	const int Cores = (int)std::thread::hardware_concurrency();
+	const int Num = std::clamp(Cores - 1, 1, (int)vVariants.size());
+	std::vector<std::shared_ptr<CJob>> vSubs;
+	for(int i = 0; i < Num; i++)
+	{
+		auto pSub = std::make_shared<CJob>();
+		pSub->m_HasStart = true;
+		pSub->m_HasGoal = true;
+		pSub->m_Width = Job.m_Width;
+		pSub->m_Height = Job.m_Height;
+		pSub->m_vGame = Job.m_vGame;
+		pSub->m_vFront = Job.m_vFront;
+		pSub->m_vTele = Job.m_vTele;
+		pSub->m_Start = Start;
+		pSub->m_vHints = vHints;
+		pSub->m_MaxTries = Job.m_MaxTries;
+		pSub->m_TowerDepth = Job.m_TowerDepth;
+		pSub->m_Forgiving = Job.m_Forgiving;
+		pSub->m_Ideal = Job.m_Ideal;
+		pSub->m_Variant = vVariants[i];
+		// the memory is shared out: about 2 GB for all of them
+		pSub->m_Variant.m_MaxNodes = 12000000 / Num;
+		vSubs.push_back(pSub);
+		std::thread([pSub]() {
+			CSearch Search(*pSub);
+			Search.Run();
+			pSub->m_Done = true;
+		}).detach();
+	}
+	const int ProgressBefore = Job.m_Progress;
+	while(true)
+	{
+		bool AllDone = true, AnyFound = false;
+		int Progress = 0, Lead = 0;
+		for(int i = 0; i < (int)vSubs.size(); i++)
+		{
+			const CJob &Sub = *vSubs[i];
+			Progress += Sub.m_Progress;
+			AllDone &= Sub.m_Done.load();
+			AnyFound |= Sub.m_Done && Sub.m_Result.m_Found;
+			if(Sub.m_LiveHints > vSubs[Lead]->m_LiveHints)
+				Lead = i;
+		}
+		// stop the rest once one finished
+		if(Job.m_Cancel || AnyFound)
+			for(const auto &pSub : vSubs)
+				pSub->m_Cancel = true;
+		Job.m_Progress = ProgressBefore + Progress;
+		Job.m_LiveTicks = vSubs[Lead]->m_LiveTicks.load();
+		Job.m_LiveHints = vSubs[Lead]->m_LiveHints.load();
+		{
+			std::vector<vec2> vPath, vTried;
+			{
+				std::lock_guard<std::mutex> Lock(vSubs[Lead]->m_LiveMutex);
+				vPath = vSubs[Lead]->m_vLivePath;
+				vTried = vSubs[Lead]->m_vLiveTried;
+			}
+			std::lock_guard<std::mutex> Lock(Job.m_LiveMutex);
+			Job.m_vLivePath = std::move(vPath);
+			Job.m_vLiveTried = std::move(vTried);
+		}
+		if(AllDone)
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	}
+	// the winner: a finished way (the quickest), else the one that passed the most hints
+	int Best = 0;
+	for(int i = 1; i < (int)vSubs.size(); i++)
+	{
+		const SResult &A = vSubs[i]->m_Result, &B = vSubs[Best]->m_Result;
+		if(A.m_Found != B.m_Found ? A.m_Found : (A.m_Found ? A.m_Ticks < B.m_Ticks : A.m_HintsPassed > B.m_HintsPassed))
+			Best = i;
+	}
+	Summary = "searches at once (one per core), each with other settings:\n";
+	int Explored = 0;
+	for(int i = 0; i < (int)vSubs.size(); i++)
+	{
+		const SResult &R = vSubs[i]->m_Result;
+		const SVariant &V = vSubs[i]->m_Variant;
+		char aLine[256];
+		str_format(aLine, sizeof(aLine), "  %d%s: per cell %d/%d, aimed %d/%d%s%s, time weight %.0f: %s, hints passed %d, %d tries\n", i + 1, i == Best ? " (this report)" : "",
+			V.m_Cap, V.m_CapFreeze, V.m_Aim, V.m_AimFreeze, V.m_AimAround ? " + around" : "", V.m_WideFixed ? "" : ", up only", V.m_TickWeight,
+			R.m_Found ? "FINISHED" : "no way", R.m_HintsPassed, R.m_Explored);
+		Summary += aLine;
+		Explored += R.m_Explored;
+	}
+	SResult Result = std::move(vSubs[Best]->m_Result);
+	Result.m_Explored = Explored;
+	return Result;
+}
+
+// piece by piece: when the bot cannot get past a place for long, the place is marked and the search goes on from
+// the hint after it, so one place that needs a precision the search does not find (70s has a few) does not end
+// the test of the whole map; at the end the way to the finish and the list of the places it could not pass
+static void RunPieces(XcSolver::CJob &Job)
+{
+	using namespace XcSolver;
+	SResult &Out = Job.m_Result;
+	vec2 Start = Job.m_Start;
+	std::vector<vec2> vHints = Job.m_vHints; // the mapper's, or empty: each piece routes itself
+	const bool MapperHints = !vHints.empty();
+	std::string Log;
+	for(int Piece = 0; Piece < 30 && !Job.m_Cancel; Piece++)
+	{
+		std::string Summary;
+		SResult R = RunSearches(Job, Start, vHints, Summary);
+		char aHeader[160];
+		str_format(aHeader, sizeof(aHeader), "==== piece %d, from %.0f %.0f ====\n", Piece + 1, Start.x / 32.0f, Start.y / 32.0f);
+		Log += aHeader + Summary + "\n" + R.m_Log + "\n";
+		if(Piece == 0)
+		{
+			Out.m_Width = R.m_Width;
+			Out.m_Height = R.m_Height;
+			Out.m_vHeat.assign(R.m_vHeat.size(), 0);
+		}
+		for(size_t i = 0; i < R.m_vHeat.size() && i < Out.m_vHeat.size(); i++)
+			Out.m_vHeat[i] = (uint16_t)std::min(65535, Out.m_vHeat[i] + R.m_vHeat[i]);
+		if(!R.m_vPath.empty())
+			Out.m_vBreaks.push_back((int)Out.m_vPath.size());
+		Out.m_vPath.insert(Out.m_vPath.end(), R.m_vPath.begin(), R.m_vPath.end());
+		Out.m_vSteps.insert(Out.m_vSteps.end(), R.m_vSteps.begin(), R.m_vSteps.end());
+		Out.m_vRoom.insert(Out.m_vRoom.end(), R.m_vRoom.begin(), R.m_vRoom.end());
+		Out.m_vTowerSpots.insert(Out.m_vTowerSpots.end(), R.m_vTowerSpots.begin(), R.m_vTowerSpots.end());
+		Out.m_vAutoHints.insert(Out.m_vAutoHints.end(), R.m_vAutoHints.begin(), R.m_vAutoHints.end());
+		Out.m_Ticks += R.m_Ticks;
+		Out.m_Hooks += R.m_Hooks;
+		Out.m_Jumps += R.m_Jumps;
+		Out.m_Explored += R.m_Explored;
+		Out.m_HintsPassed += R.m_HintsPassed;
+		Out.m_Closest = R.m_Closest;
+		Out.m_Found = R.m_Found;
+		if(R.m_Found || Job.m_Cancel)
+			break;
+		// stuck: mark the place and go on from the hint after the one it could not reach (two after, when this
+		// piece got nowhere at all)
+		const std::vector<vec2> &vRoute = MapperHints ? vHints : R.m_vAutoHints;
+		const int Next = R.m_HintsPassed + (Piece > 0 && R.m_HintsPassed == 0 ? 2 : 1);
+		if(R.m_vPath.empty() || Next >= (int)vRoute.size())
+			break;
+		Out.m_vStuck.push_back(R.m_Closest);
+		Start = vRoute[Next];
+		if(MapperHints)
+			vHints.erase(vHints.begin(), vHints.begin() + Next + 1);
+	}
+	if(!Out.m_vStuck.empty())
+	{
+		char aLine[128];
+		str_format(aLine, sizeof(aLine), "places the bot could not pass (it went on from the next hint): %d\n", (int)Out.m_vStuck.size());
+		std::string List = aLine;
+		for(const vec2 &Pos : Out.m_vStuck)
+		{
+			str_format(aLine, sizeof(aLine), "  %.0f %.0f\n", Pos.x / 32.0f, Pos.y / 32.0f);
+			List += aLine;
+		}
+		Log = List + "\n" + Log;
+	}
+	Out.m_Log = Log;
+	Job.m_Done = true;
+}
+
 std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints, int TowerDepth, bool Forgiving, bool Ideal)
 {
 	auto pJob = std::make_shared<CJob>();
@@ -1182,129 +1378,8 @@ std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile 
 	}
 	pJob->m_Start = vec2((From % Width) * 32.0f + 16.0f, (From / Width) * 32.0f + 16.0f);
 
-	// several searches with different settings at once, one per core (the search gets far with one setting and
-	// stuck early with another, differently on each map); the best result wins
-	std::vector<XcSolver::SVariant> vVariants;
-	{
-		XcSolver::SVariant V;
-		vVariants.push_back(V); // 100 / 500, aimed all around
-		V.m_Cap = 300;
-		V.m_CapFreeze = 1500;
-		vVariants.push_back(V);
-		V = {};
-		V.m_Cap = 40;
-		V.m_CapFreeze = 160;
-		V.m_Aim = 8;
-		V.m_AimFreeze = 12;
-		V.m_AimAround = false;
-		V.m_WideFixed = false;
-		vVariants.push_back(V);
-		V = {};
-		V.m_Cap = 200;
-		V.m_CapFreeze = 800;
-		vVariants.push_back(V);
-		V = {};
-		V.m_Aim = 8;
-		V.m_AimFreeze = 12;
-		V.m_AimAround = false;
-		vVariants.push_back(V);
-		V = {};
-		V.m_Cap = 300;
-		V.m_CapFreeze = 1500;
-		V.m_TickWeight = 2.0f;
-		vVariants.push_back(V);
-	}
-	const int Cores = (int)std::thread::hardware_concurrency();
-	const int Num = std::clamp(Cores - 1, 1, (int)vVariants.size());
-	std::vector<std::shared_ptr<CJob>> vSubs;
-	for(int i = 0; i < Num; i++)
-	{
-		auto pSub = std::make_shared<CJob>();
-		pSub->m_HasStart = pJob->m_HasStart;
-		pSub->m_HasGoal = pJob->m_HasGoal;
-		pSub->m_Width = Width;
-		pSub->m_Height = Height;
-		pSub->m_vGame = pJob->m_vGame;
-		pSub->m_vFront = pJob->m_vFront;
-		pSub->m_vTele = pJob->m_vTele;
-		pSub->m_Start = pJob->m_Start;
-		pSub->m_vHints = pJob->m_vHints;
-		pSub->m_MaxTries = MaxTries;
-		pSub->m_TowerDepth = TowerDepth;
-		pSub->m_Forgiving = Forgiving;
-		pSub->m_Ideal = Ideal;
-		pSub->m_Variant = vVariants[i];
-		// the memory is shared out: about 2 GB for all of them
-		pSub->m_Variant.m_MaxNodes = 12000000 / Num;
-		vSubs.push_back(pSub);
-		std::thread([pSub]() {
-			CSearch Search(*pSub);
-			Search.Run();
-			pSub->m_Done = true;
-		}).detach();
-	}
-	// the one that watches them: shows the way of the one furthest along, stops the rest once one finished
-	std::thread([pJob, vSubs]() {
-		while(true)
-		{
-			bool AllDone = true, AnyFound = false;
-			int Progress = 0, Lead = 0;
-			for(int i = 0; i < (int)vSubs.size(); i++)
-			{
-				const CJob &Sub = *vSubs[i];
-				Progress += Sub.m_Progress;
-				AllDone &= Sub.m_Done.load();
-				AnyFound |= Sub.m_Done && Sub.m_Result.m_Found;
-				if(Sub.m_LiveHints > vSubs[Lead]->m_LiveHints)
-					Lead = i;
-			}
-			if(pJob->m_Cancel || AnyFound)
-				for(const auto &pSub : vSubs)
-					pSub->m_Cancel = true;
-			pJob->m_Progress = Progress;
-			pJob->m_LiveTicks = vSubs[Lead]->m_LiveTicks.load();
-			pJob->m_LiveHints = vSubs[Lead]->m_LiveHints.load();
-			{
-				std::vector<vec2> vPath, vTried;
-				{
-					std::lock_guard<std::mutex> Lock(vSubs[Lead]->m_LiveMutex);
-					vPath = vSubs[Lead]->m_vLivePath;
-					vTried = vSubs[Lead]->m_vLiveTried;
-				}
-				std::lock_guard<std::mutex> Lock(pJob->m_LiveMutex);
-				pJob->m_vLivePath = std::move(vPath);
-				pJob->m_vLiveTried = std::move(vTried);
-			}
-			if(AllDone)
-				break;
-			std::this_thread::sleep_for(std::chrono::milliseconds(200));
-		}
-		// the winner: a finished way (the quickest), else the one that passed the most hints
-		int Best = 0;
-		for(int i = 1; i < (int)vSubs.size(); i++)
-		{
-			const SResult &A = vSubs[i]->m_Result, &B = vSubs[Best]->m_Result;
-			if(A.m_Found != B.m_Found ? A.m_Found : (A.m_Found ? A.m_Ticks < B.m_Ticks : A.m_HintsPassed > B.m_HintsPassed))
-				Best = i;
-		}
-		std::string Summary = "searches at once (one per core), each with other settings:\n";
-		int Explored = 0;
-		for(int i = 0; i < (int)vSubs.size(); i++)
-		{
-			const SResult &R = vSubs[i]->m_Result;
-			const SVariant &V = vSubs[i]->m_Variant;
-			char aLine[256];
-			str_format(aLine, sizeof(aLine), "  %d%s: per cell %d/%d, aimed %d/%d%s%s, time weight %.0f: %s, hints passed %d, %d tries\n", i + 1, i == Best ? " (this report)" : "",
-				V.m_Cap, V.m_CapFreeze, V.m_Aim, V.m_AimFreeze, V.m_AimAround ? " + around" : "", V.m_WideFixed ? "" : ", up only", V.m_TickWeight,
-				R.m_Found ? "FINISHED" : "no way", R.m_HintsPassed, R.m_Explored);
-			Summary += aLine;
-			Explored += R.m_Explored;
-		}
-		pJob->m_Result = std::move(vSubs[Best]->m_Result);
-		pJob->m_Result.m_Log = Summary + "\n" + pJob->m_Result.m_Log;
-		pJob->m_Result.m_Explored = Explored;
-		pJob->m_Done = true;
-	}).detach();
+	// the search runs piece by piece (see RunPieces); the one that watches it all
+	std::thread([pJob]() { RunPieces(*pJob); }).detach();
 	return pJob;
 }
 
