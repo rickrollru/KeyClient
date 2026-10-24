@@ -913,6 +913,13 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					m_HintMode = !m_HintMode;
 				if(!m_vSolveHints.empty() && ImGui::MenuItem(Tr("Bot: clear the hints")))
 					m_vSolveHints.clear();
+				if(ImGui::MenuItem(Tr("Bot: open the folder with its log (bot_log.txt)")))
+				{
+					char aFolder[IO_MAX_PATH_LENGTH];
+					E.Storage()->CreateFolder("xclient", IStorage::TYPE_SAVE);
+					E.Storage()->GetCompletePath(IStorage::TYPE_SAVE, "xclient", aFolder, sizeof(aFolder));
+					E.Client()->ViewFile(aFolder);
+				}
 				if(ImGui::MenuItem(Tr("Bot: heat map"), nullptr, m_ShowHeat, !m_SolveResult.m_vHeat.empty()))
 					m_ShowHeat = !m_ShowHeat;
 				if(ImGui::BeginMenu(Tr("Bot: look for tower skips"), !m_pSolveJob))

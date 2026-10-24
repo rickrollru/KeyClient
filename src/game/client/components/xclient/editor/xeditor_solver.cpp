@@ -2,11 +2,14 @@
 
 #include <base/math.h>
 #include <base/mem.h>
+#include <base/str.h>
 
 #include <game/collision.h>
 #include <game/gamecore.h>
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <set>
 #include <cmath>
 #include <deque>
@@ -171,6 +174,19 @@ private:
 	}
 	// one tick along the way of the middle of the tee, like the server: freeze, teleports, the finish
 	void HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, int &FreezeTicks, bool &Unfrozen, bool &Dead, bool &Done) const;
+
+	// the report
+	enum
+	{
+		END_DEATH = 0, // a death or deep freeze tile
+		END_OUT, // out of the map
+		END_THAW, // thawed out by waiting after freeze
+		END_STUCK, // came to rest in freeze
+		NUM_ENDS,
+	};
+	mutable int m_aEnds[NUM_ENDS] = {};
+	void Log(const char *pFormat, ...);
+	void LogGrid(vec2 Center, const std::vector<vec2> &vPath) const;
 	std::vector<uint8_t> m_vNearFreeze; // freeze or death within two cells
 	bool NearFreeze(vec2 Pos) const
 	{
@@ -264,6 +280,7 @@ void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, 
 		if(DeadlyAt(Pos))
 		{
 			Dead = true;
+			m_aEnds[END_DEATH]++;
 			return;
 		}
 		if(UnfreezeAt(Pos))
@@ -324,6 +341,75 @@ void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, 
 		default:
 			break;
 		}
+	}
+}
+
+void CSearch::Log(const char *pFormat, ...)
+{
+	char aBuf[512];
+	va_list Args;
+	va_start(Args, pFormat);
+	std::vsnprintf(aBuf, sizeof(aBuf), pFormat, Args);
+	va_end(Args);
+	m_Job.m_Result.m_Log += aBuf;
+}
+
+// the cells around a place as text: # wall, N unhookable, F freeze, D death, u unfreeze, T tele in, O tele out,
+// S start, E finish, h hint, * the way of the bot, @ the place
+void CSearch::LogGrid(vec2 Center, const std::vector<vec2> &vPath) const
+{
+	const int cx = (int)(Center.x / 32.0f), cy = (int)(Center.y / 32.0f);
+	std::vector<uint8_t> vOnPath((size_t)m_Job.m_Width * m_Job.m_Height, 0);
+	for(const vec2 &Pos : vPath)
+	{
+		const int x = (int)(Pos.x / 32.0f), y = (int)(Pos.y / 32.0f);
+		if(x >= 0 && y >= 0 && x < m_Job.m_Width && y < m_Job.m_Height)
+			vOnPath[y * m_Job.m_Width + x] = 1;
+	}
+	std::string &Out = m_Job.m_Result.m_Log;
+	char aBuf[64];
+	str_format(aBuf, sizeof(aBuf), "cells %d..%d x, %d..%d y\n", cx - 35, cx + 35, cy - 18, cy + 18);
+	Out += aBuf;
+	for(int y = cy - 18; y <= cy + 18; y++)
+	{
+		for(int x = cx - 35; x <= cx + 35; x++)
+		{
+			const int g = Tile(m_Job.m_vGame, x, y), f = Tile(m_Job.m_vFront, x, y);
+			const CTeleTile *pTele = TeleAt(vec2(x * 32.0f + 16.0f, y * 32.0f + 16.0f));
+			bool Hint = false;
+			for(const vec2 &H : m_Job.m_vHints)
+				if((int)(H.x / 32.0f) == x && (int)(H.y / 32.0f) == y)
+					Hint = true;
+			char c = '.';
+			if(x == cx && y == cy)
+				c = '@';
+			else if(x < 0 || y < 0 || x >= m_Job.m_Width || y >= m_Job.m_Height)
+				c = ' ';
+			else if(vOnPath[y * m_Job.m_Width + x])
+				c = '*';
+			else if(Hint)
+				c = 'h';
+			else if(g == TILE_SOLID)
+				c = '#';
+			else if(g == TILE_NOHOOK)
+				c = 'N';
+			else if(Freezes(g) || Freezes(f))
+				c = 'F';
+			else if(Deadly(g) || Deadly(f))
+				c = 'D';
+			else if(Unfreezes(g) || Unfreezes(f))
+				c = 'u';
+			else if(g == TILE_FINISH || f == TILE_FINISH)
+				c = 'E';
+			else if(g == TILE_START || f == TILE_START)
+				c = 'S';
+			else if(pTele && (pTele->m_Type == TILE_TELEIN || pTele->m_Type == TILE_TELEINEVIL))
+				c = 'T';
+			else if(pTele && pTele->m_Type == TILE_TELEOUT)
+				c = 'O';
+			Out += c;
+		}
+		Out += '\n';
 	}
 }
 
@@ -494,8 +580,21 @@ void CSearch::Run()
 		const float Next = Field(k + 1, m_Job.m_vHints[k]);
 		m_vRest[k] = m_vRest[k + 1] + (Next >= FAR ? (k + 1 < NumHints ? distance(m_Job.m_vHints[k], m_Job.m_vHints[k + 1]) : 0.0f) : Next);
 	}
+	{
+		int Finish = 0, TeleIns = 0;
+		for(size_t i = 0; i < m_Job.m_vGame.size(); i++)
+		{
+			Finish += m_Job.m_vGame[i].m_Index == TILE_FINISH || (!m_Job.m_vFront.empty() && m_Job.m_vFront[i].m_Index == TILE_FINISH);
+			TeleIns += !m_Job.m_vTele.empty() && (m_Job.m_vTele[i].m_Type == TILE_TELEIN || m_Job.m_vTele[i].m_Type == TILE_TELEINEVIL);
+		}
+		Log("map %d x %d cells, start at %.0f %.0f, finish cells %d, teleport ins %d\n", m_Job.m_Width, m_Job.m_Height, m_Job.m_Start.x / 32.0f, m_Job.m_Start.y / 32.0f, Finish, TeleIns);
+		Log("hints %d (%s), tower check depth %d, max tries %d\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries);
+		Log("way through free cells from the start: %.0f cells\n", Heuristic(m_Job.m_Start, 0) >= FAR ? -1.0f : Heuristic(m_Job.m_Start, 0) / 32.0f);
+	}
 	if(Heuristic(m_Job.m_Start, 0) >= FAR)
 	{
+		Log("the finish cannot be reached through free cells from the start (walls, missing teleport outs?)\n");
+		LogGrid(m_Job.m_Start, {});
 		// the finish cannot be reached through free cells at all
 		m_Collision.Unload();
 		return;
@@ -590,6 +689,7 @@ void CSearch::Run()
 			// this hint does not work out: aim at the next one
 			SkipStage = MaxStage + 1;
 			SinceStage = 0;
+			Log("try %d: hint %d not reached in 25000 tries, skipped (best place %.0f %.0f)\n", Result.m_Explored, MaxStage + 1, vNodes[BestNode].m_State.m_Pos.x / 32.0f, vNodes[BestNode].m_State.m_Pos.y / 32.0f);
 		}
 		{
 			const int hx = std::clamp((int)(Node.m_State.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), hy = std::clamp((int)(Node.m_State.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
@@ -664,7 +764,10 @@ void CSearch::Run()
 				Core.Move();
 				Core.Quantize();
 				if(Core.m_Pos.x < 0.0f || Core.m_Pos.y < 0.0f || Core.m_Pos.x >= m_Job.m_Width * 32.0f || Core.m_Pos.y >= m_Job.m_Height * 32.0f)
+				{
 					Dead = true;
+					m_aEnds[END_OUT]++;
+				}
 				else
 				{
 					const bool WasFrozen = FreezeTicks > 0;
@@ -674,11 +777,17 @@ void CSearch::Run()
 					HandleTiles(PrevPos, Core, TeleCheckpoint, FreezeTicks, Unfrozen, Dead, Done);
 					// freeze is passed only when an unfreeze tile ends it on the way (maps made like that); thawing
 					// out by waiting 3 s after falling through freeze is a skip, not the way
-					if(WasFrozen && FreezeTicks == 0 && !Unfrozen)
+					if(!Dead && WasFrozen && FreezeTicks == 0 && !Unfrozen)
+					{
 						Dead = true;
+						m_aEnds[END_THAW]++;
+					}
 					// frozen and come to rest in the freeze: stuck for good
-					if(FreezeTicks > 0 && length(Core.m_Vel) < 0.5f && FreezeAt(Core.m_Pos))
+					if(!Dead && FreezeTicks > 0 && length(Core.m_Vel) < 0.5f && FreezeAt(Core.m_Pos))
+					{
 						Dead = true;
+						m_aEnds[END_STUCK]++;
+					}
 				}
 			}
 			if(Dead)
@@ -736,6 +845,7 @@ void CSearch::Run()
 			}
 			if(Stage > MaxStage)
 			{
+				Log("try %d: hint %d reached at %.0f %.0f, game time %.2f s\n", Result.m_Explored, Stage, New.m_Pos.x / 32.0f, New.m_Pos.y / 32.0f, Child.m_Steps / 50.0f);
 				MaxStage = Stage;
 				AtMaxStage = 0;
 				SinceStage = 0;
@@ -765,6 +875,27 @@ void CSearch::Run()
 	std::reverse(Result.m_vPath.begin(), Result.m_vPath.end());
 	std::reverse(Result.m_vSteps.begin(), Result.m_vSteps.end());
 	Result.m_Ticks = vNodes[Last].m_Steps;
+	{
+		Log("\nresult: %s after %d tries%s\n", Goal >= 0 ? "FINISHED" : "no way", Result.m_Explored, m_Job.m_Cancel ? " (stopped)" : "");
+		Log("best place %.0f %.0f, game time %.2f s, hints passed %d of %d\n", vNodes[Last].m_State.m_Pos.x / 32.0f, vNodes[Last].m_State.m_Pos.y / 32.0f, vNodes[Last].m_Steps / 50.0f, vNodes[Last].m_Stage, (int)m_Job.m_vHints.size());
+		Log("tries ended by: death tile %d, out of the map %d, thawed without unfreeze %d, stuck in freeze %d\n", m_aEnds[END_DEATH], m_aEnds[END_OUT], m_aEnds[END_THAW], m_aEnds[END_STUCK]);
+		Log("\nthe cells around the best place:\n");
+		LogGrid(vNodes[Last].m_State.m_Pos, Result.m_vPath);
+		// the last steps of the best way
+		std::vector<int> vChain;
+		for(int i = Last; i >= 0; i = vNodes[i].m_Parent)
+			vChain.push_back(i);
+		std::reverse(vChain.begin(), vChain.end());
+		Log("\nlast steps of the best way (tick: cell x y, speed x y, input: dir jump hook aim, frozen ticks):\n");
+		for(size_t k = vChain.size() > 40 ? vChain.size() - 40 : 0; k < vChain.size(); k++)
+		{
+			const SNode &N = vNodes[vChain[k]];
+			const char *apHook[] = {"release", "hold", "hook"};
+			Log("%5d: %6.1f %6.1f  v %6.1f %6.1f  dir %2d jump %d %-7s aim %4.0f  frozen %d%s\n", N.m_Steps, N.m_State.m_Pos.x / 32.0f, N.m_State.m_Pos.y / 32.0f,
+				N.m_State.m_Vel.x, N.m_State.m_Vel.y, N.m_Step.m_Direction, N.m_Step.m_Jump ? 1 : 0, apHook[std::clamp(N.m_Step.m_Hook, 0, 2)],
+				angle(N.m_Step.m_Target) * 180.0f / pi, N.m_State.m_FreezeTicks, N.m_State.m_HookState == HOOK_GRABBED ? "  (hooked)" : "");
+		}
+	}
 	Result.m_Width = m_Job.m_Width;
 	Result.m_Height = m_Job.m_Height;
 	Result.m_vHeat = std::move(vHeat);

@@ -8,6 +8,7 @@
 #include <game/mapitems.h>
 
 #include <atomic>
+#include <string>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -44,6 +45,8 @@ struct SResult
 	std::vector<vec2> m_vTowerSpots;
 	// the hints set along the route when the mapper gave none
 	std::vector<vec2> m_vAutoHints;
+	// a text report of the search for the mapper to send: hints reached, why tries ended, the place it stopped
+	std::string m_Log;
 };
 
 // a search running in a thread: copies the tiles first, so the map can change meanwhile

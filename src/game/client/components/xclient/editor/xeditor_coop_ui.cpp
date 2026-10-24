@@ -4,9 +4,11 @@
 
 #include <game/client/components/xclient/ui/feedback.h>
 
+#include <base/io.h>
 #include <base/str.h>
 
 #include <engine/shared/config.h>
+#include <engine/storage.h>
 #include <engine/textrender.h>
 
 #include <game/client/animstate.h>
@@ -422,8 +424,19 @@ void CXcEditorUi::UpdateSolve()
 {
 	if(!m_pSolveJob || !m_pSolveJob->m_Done)
 		return;
+	CEditor &E = *m_pEditor;
 	m_SolveResult = std::move(m_pSolveJob->m_Result);
 	const XcSolver::SResult &Result = m_SolveResult;
+	// the report for the mapper to send: xclient/bot_log.txt in the save folder
+	{
+		E.Storage()->CreateFolder("xclient", IStorage::TYPE_SAVE);
+		IOHANDLE File = E.Storage()->OpenFile("xclient/bot_log.txt", IOFLAG_WRITE, IStorage::TYPE_SAVE);
+		if(File)
+		{
+			io_write(File, Result.m_Log.data(), Result.m_Log.size());
+			io_close(File);
+		}
+	}
 	m_vSolvePath = Result.m_vPath;
 	m_SolveFound = Result.m_Found;
 	char aMsg[256];

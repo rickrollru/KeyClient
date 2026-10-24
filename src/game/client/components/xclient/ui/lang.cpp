@@ -745,6 +745,7 @@ namespace XcUi
 			{"No servers found", "Серверы не найдены"},
 			{"Asking the master servers for the list", "Запрашиваю список у мастер-серверов"},
 			{"Try another filter or refresh the list", "Попробуй другой фильтр или обнови список"},
+			{"Bot: open the folder with its log (bot_log.txt)", "Бот: открыть папку с логом (bot_log.txt)"},
 			{"Bot: heat map", "Бот: тепловая карта"},
 			{"Bot: look for tower skips", "Бот: искать тавер-скипы"},
 			{"Easy: towers do not matter", "Easy: таверы не важны"},
