@@ -304,6 +304,8 @@ void CXcEditorUi::Render()
 	{
 		E.MapView()->Render(m_View);
 		RenderCoopTees();
+		UpdateSolve();
+		RenderSolvePath();
 		// Ctrl + right click on a tile picks its layer, again: the next layer with a tile there (like the classic editor)
 		if(E.LayerSelector()->SelectByTile())
 		{
@@ -892,6 +894,10 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					OpenDepthDialog();
 				if(ImGui::MenuItem(Tr("Tune zones...")))
 					m_TuneRequest = true;
+				if(ImGui::MenuItem(Tr("Bot: find the way to the finish"), nullptr, false, !m_pSolveJob))
+					StartSolve();
+				if(!m_vSolvePath.empty() && ImGui::MenuItem(Tr("Bot: hide the way")))
+					m_vSolvePath.clear();
 				ImGui::Separator();
 				if(ImGui::MenuItem(Tr("More tools...")))
 				{

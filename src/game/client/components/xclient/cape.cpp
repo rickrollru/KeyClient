@@ -32,14 +32,14 @@ static ColorRGBA ConfigColor(unsigned Value)
 }
 
 // a thick line as one quad, inside an open QuadsBegin
-static void DrawSegment(IGraphics *pGraphics, vec2 a, vec2 b, float Width, const ColorRGBA &Color)
+static void DrawSegment(IGraphics *pGraphics, vec2 a, vec2 b, float Width, const ColorRGBA &Color, float Overlap = 0.35f)
 {
 	const vec2 Dir = b - a;
 	const float Len = length(Dir);
 	if(Len < 0.001f)
 		return;
 	const vec2 Side = vec2(-Dir.y, Dir.x) / Len * (Width * 0.5f);
-	const vec2 Along = Dir / Len * (Width * 0.35f); // overlaps the next segment so corners stay closed
+	const vec2 Along = Dir / Len * (Width * Overlap); // overlaps the next segment so corners stay closed
 	pGraphics->SetColor(Color);
 	const IGraphics::CFreeformItem Item(a - Along + Side, b + Along + Side, a - Along - Side, b + Along - Side);
 	pGraphics->QuadsDrawFreeform(&Item, 1);
@@ -312,7 +312,7 @@ void CXcCape::GlowLine(const vec2 *pPoints, int Num, const ColorRGBA *pColors, f
 		Graphics()->BlendAdditive();
 		Graphics()->QuadsBegin();
 		for(int i = 0; i + 1 < Num; i++)
-			DrawSegment(Graphics(), pPoints[i], pPoints[i + 1], Width, Hot(pColors[i], 0.45f).WithMultipliedAlpha(0.9f));
+			DrawSegment(Graphics(), pPoints[i], pPoints[i + 1], Width, Hot(pColors[i], 0.45f).WithMultipliedAlpha(0.9f), 0.0f); // added light: overlaps would be bright dots
 		Graphics()->QuadsEnd();
 		Graphics()->BlendNormal();
 		return;

@@ -38,6 +38,8 @@ public:
 	~CCollision();
 
 	void Init(CLayers *pLayers);
+	// XClient: collision over tiles of the editor (the map generator tests places), the tiles are not owned
+	void XcInitTiles(CTile *pGame, CTile *pFront, int Width, int Height);
 	void Unload();
 	// XClient: the tiles changed in place (live map editing): rebuild the teleporter lists and switch numbers,
 	// keeping the state of the doors

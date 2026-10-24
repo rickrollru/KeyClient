@@ -2,6 +2,8 @@
 // over the map.
 #include "xeditor.h"
 
+#include <game/client/components/xclient/ui/feedback.h>
+
 #include <base/str.h>
 
 #include <engine/shared/config.h>
@@ -387,3 +389,72 @@ void CXcEditorUi::RenderInGame()
 	}
 }
 
+
+void CXcEditorUi::StartSolve()
+{
+	CEditor &E = *m_pEditor;
+	const std::shared_ptr<CLayerGame> &pGame = E.Map()->m_pGameLayer;
+	if(!pGame)
+		return;
+	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
+	m_vSolvePath.clear();
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pGame->m_Width, pGame->m_Height, 60000);
+	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)
+	{
+		XcUi::Toast(Tr("The bot needs a spawn (or a start line) and a finish line in the game layer"), XcUi::TOAST_ERROR);
+		m_pSolveJob.reset();
+		return;
+	}
+	XcUi::Toast(Tr("The bot is looking for a way..."), XcUi::TOAST_INFO);
+}
+
+void CXcEditorUi::UpdateSolve()
+{
+	if(!m_pSolveJob || !m_pSolveJob->m_Done)
+		return;
+	const XcSolver::SResult &Result = m_pSolveJob->m_Result;
+	m_vSolvePath = Result.m_vPath;
+	m_SolveFound = Result.m_Found;
+	char aMsg[256];
+	if(Result.m_Found)
+		str_format(aMsg, sizeof(aMsg), Tr("The bot got through: %.1f s, %d hooks, %d jumps"), Result.m_Ticks / 50.0f, Result.m_Hooks, Result.m_Jumps);
+	else
+		str_format(aMsg, sizeof(aMsg), Tr("The bot found no way (%d tries). The red mark is as far as it got"), Result.m_Explored);
+	XcUi::Toast(aMsg, Result.m_Found ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
+	m_pSolveJob.reset();
+}
+
+void CXcEditorUi::RenderSolvePath()
+{
+	if(m_vSolvePath.size() < 2)
+		return;
+	CEditor &E = *m_pEditor;
+	CLayerGroup *pGame = nullptr;
+	for(const auto &pGroup : E.Map()->m_vpGroups)
+		if(pGroup->m_GameGroup)
+			pGame = pGroup.get();
+	if(!pGame)
+		return;
+	pGame->MapScreen();
+	IGraphics *pGraphics = E.Graphics();
+	pGraphics->TextureClear();
+	pGraphics->LinesBegin();
+	pGraphics->SetColor(m_SolveFound ? ColorRGBA(0.35f, 1.0f, 0.6f, 0.95f) : ColorRGBA(1.0f, 0.65f, 0.25f, 0.95f));
+	for(size_t i = 0; i + 1 < m_vSolvePath.size(); i++)
+	{
+		const IGraphics::CLineItem Line(m_vSolvePath[i].x, m_vSolvePath[i].y, m_vSolvePath[i + 1].x, m_vSolvePath[i + 1].y);
+		pGraphics->LinesDraw(&Line, 1);
+	}
+	pGraphics->LinesEnd();
+	if(!m_SolveFound)
+	{
+		// the farthest point it reached
+		const vec2 End = m_vSolvePath.back();
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(1.0f, 0.25f, 0.25f, 0.9f);
+		const IGraphics::CQuadItem Quad(End.x - 8.0f, End.y - 8.0f, 16.0f, 16.0f);
+		pGraphics->QuadsDrawTL(&Quad, 1);
+		pGraphics->QuadsEnd();
+	}
+	E.Ui()->MapScreen();
+}

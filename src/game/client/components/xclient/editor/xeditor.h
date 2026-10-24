@@ -14,6 +14,7 @@
 
 #include "xeditor_coop.h"
 #include "xeditor_live.h"
+#include "xeditor_solver.h"
 
 #include <game/client/components/xclient/ui/imgui_backend.h>
 
@@ -340,6 +341,14 @@ private:
 	void RenderCoop();
 	void RenderCoopCursors();
 	void RenderCoopTees();
+
+	// the bot of the map generator: finds a way from the spawn to the finish on the real physics
+	std::shared_ptr<XcSolver::CJob> m_pSolveJob;
+	std::vector<vec2> m_vSolvePath;
+	bool m_SolveFound = false;
+	void StartSolve();
+	void UpdateSolve();
+	void RenderSolvePath();
 
 public:
 	void RenderInGame(); // playing together: the cursors of the friends in the world

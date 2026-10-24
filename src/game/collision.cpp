@@ -164,6 +164,17 @@ void CCollision::XcRefresh()
 	}
 }
 
+// XClient
+void CCollision::XcInitTiles(CTile *pGame, CTile *pFront, int Width, int Height)
+{
+	Unload();
+	m_Width = Width;
+	m_Height = Height;
+	m_pTiles = pGame;
+	m_pFront = pFront;
+	m_HasHookTeleIns = false;
+}
+
 void CCollision::Unload()
 {
 	m_pTiles = nullptr;
