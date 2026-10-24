@@ -376,7 +376,8 @@ void CXcEditorUi::RenderTuneSummary()
 	}
 	ImGui::PopFont();
 	ImGui::Dummy(ImVec2(0.0f, S(2.0f)));
-	if(Button(Tr("Set up the tune zones..."), true, Width))
+	// only a real click on the button: a click on a menu over the panel (the Map menu's "Bot: stop") opened it
+	if(Button(Tr("Set up the tune zones..."), true, Width) && ImGui::IsItemHovered())
 	{
 		m_TuneRequest = true;
 		m_TuneZone = Zone;

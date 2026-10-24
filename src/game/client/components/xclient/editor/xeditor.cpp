@@ -914,7 +914,8 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					StartIdealRoute();
 				if(!m_IdealRoute.m_vPath.empty() && ImGui::MenuItem(Tr("Hide the ideal route")))
 					m_IdealRoute = {};
-				if(m_pSolveJob && ImGui::MenuItem(Tr("Bot: stop")))
+				// always in the menu (greyed out when idle), so the items below never move under the mouse
+				if(ImGui::MenuItem(Tr("Bot: stop"), nullptr, false, m_pSolveJob != nullptr) && m_pSolveJob)
 					m_pSolveJob->m_Cancel = true;
 				if(ImGui::MenuItem(Tr("Bot: place hints (left click adds, right click removes)"), nullptr, m_HintMode))
 					m_HintMode = !m_HintMode;

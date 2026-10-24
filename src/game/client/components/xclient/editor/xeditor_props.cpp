@@ -540,7 +540,11 @@ void CXcEditorUi::RenderRightPanel()
 			{
 				// these popups also react to keys (N, Ctrl+F) like when they are open, so they only run while the
 				// mouse is over this panel; the card keeps the last values meanwhile
-				const bool PanelHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+				// not through a menu or another popup lying over the panel: a click on "Bot: stop" in the Map menu
+				// went through to the brush card (its number wrapped to 255) and opened the tune zones
+				const ImGuiWindow *pHoveredWindow = GImGui->HoveredWindow;
+				const bool OverPopup = pHoveredWindow && (pHoveredWindow->Flags & ImGuiWindowFlags_Popup) && pHoveredWindow->RootWindow != ImGui::GetCurrentWindow()->RootWindow;
+				const bool PanelHovered = !OverPopup && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 				if(PanelHovered || m_pLastBrushLayer != pLayer.get() || m_aCaptures[CAPTURE_BRUSH].m_PendingCall >= 0 || m_aCaptures[CAPTURE_BRUSH].m_pPendingButton)
 					RunCapture(CAPTURE_BRUSH, pfnBrush, &E);
 				m_pLastBrushLayer = pLayer.get();
