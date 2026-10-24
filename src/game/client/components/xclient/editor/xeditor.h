@@ -355,7 +355,7 @@ private:
 	bool m_HintMode = false;
 	void RenderSolveHints();
 	void RenderSolveHeat();
-	void StartSolve(int TowerDepth = 0, const char *pLevel = "");
+	void StartSolve(int TowerDepth = 0, const char *pLevel = "", bool Forgiving = false);
 	void UpdateSolve();
 	void RenderSolvePath();
 

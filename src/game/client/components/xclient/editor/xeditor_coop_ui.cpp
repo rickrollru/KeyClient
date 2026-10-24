@@ -399,7 +399,7 @@ static void FormatRaceTime(char *pBuf, int Size, int Ticks)
 	str_format(pBuf, Size, "%d:%02d.%02d", Centis / 6000, (Centis / 100) % 60, Centis % 100);
 }
 
-void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel)
+void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel, bool Forgiving)
 {
 	CEditor &E = *m_pEditor;
 	const std::shared_ptr<CLayerGame> &pGame = E.Map()->m_pGameLayer;
@@ -408,7 +408,7 @@ void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel)
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
 	const std::shared_ptr<CLayerTele> &pTele = E.Map()->m_pTeleLayer;
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 600000, m_vSolveHints, TowerDepth);
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 600000, m_vSolveHints, TowerDepth, Forgiving);
 	m_SolveTowerDepth = TowerDepth;
 	m_pSolveTowerLevel = pLevel;
 	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)

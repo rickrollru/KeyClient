@@ -907,6 +907,8 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					m_TuneRequest = true;
 				if(ImGui::MenuItem(Tr("Bot: find the way to the finish"), nullptr, false, !m_pSolveJob))
 					StartSolve();
+				if(ImGui::MenuItem(Tr("Bot: find the way, soft check (short touches of freeze are forgiven)"), nullptr, false, !m_pSolveJob))
+					StartSolve(0, "", true);
 				if(m_pSolveJob && ImGui::MenuItem(Tr("Bot: stop")))
 					m_pSolveJob->m_Cancel = true;
 				if(ImGui::MenuItem(Tr("Bot: place hints (left click adds, right click removes)"), nullptr, m_HintMode))

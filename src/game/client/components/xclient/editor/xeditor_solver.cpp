@@ -46,6 +46,7 @@ struct SState
 	CNetObj_PlayerInput m_Input;
 	int m_TeleCheckpoint = 0; // the last tele checkpoint passed (not part of the core)
 	int m_FreezeTicks = 0; // frozen for so long still: no input
+	int m_FreezeTouch = 0; // the soft check: ticks in a row the middle of the tee was in freeze
 };
 
 struct SNode
@@ -185,6 +186,7 @@ private:
 		NUM_ENDS,
 	};
 	mutable int m_aEnds[NUM_ENDS] = {};
+	mutable bool m_TouchedFreeze = false; // the soft check: this tick passed freeze
 	void Log(const char *pFormat, ...);
 	void LogGrid(vec2 Center, const std::vector<vec2> &vPath) const;
 	std::vector<uint8_t> m_vNearFreeze; // freeze or death within two cells
@@ -289,7 +291,12 @@ void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, 
 			FreezeTicks = 0;
 		}
 		else if(FreezeAt(Pos))
-			FreezeTicks = FREEZE_TICKS;
+		{
+			if(m_Job.m_Forgiving)
+				m_TouchedFreeze = true;
+			else
+				FreezeTicks = FREEZE_TICKS;
+		}
 		if(FinishAt(Pos))
 		{
 			Done = true;
@@ -569,6 +576,29 @@ void CSearch::Run()
 							m_vNearFreeze[(y + dy) * m_Job.m_Width + x + dx] = 1;
 	if(m_Job.m_vHints.empty())
 		AutoHints();
+	else
+	{
+		// a hint of the mapper in a wall or in freeze: moved to the nearest free cell
+		for(vec2 &Hint : m_Job.m_vHints)
+		{
+			const int hx = (int)(Hint.x / 32.0f), hy = (int)(Hint.y / 32.0f);
+			auto FreeCell = [&](int x, int y) {
+				const int g = Tile(m_Job.m_vGame, x, y), f = Tile(m_Job.m_vFront, x, y);
+				return x >= 0 && y >= 0 && x < m_Job.m_Width && y < m_Job.m_Height && g != TILE_SOLID && g != TILE_NOHOOK && !Deadly(g) && !Deadly(f) && !Freezes(g) && !Freezes(f);
+			};
+			if(FreeCell(hx, hy))
+				continue;
+			bool Moved = false;
+			for(int r = 1; r <= 12 && !Moved; r++)
+				for(int dy = -r; dy <= r && !Moved; dy++)
+					for(int dx = -r; dx <= r && !Moved; dx++)
+						if((std::abs(dx) == r || std::abs(dy) == r) && FreeCell(hx + dx, hy + dy))
+						{
+							Hint = vec2((hx + dx) * 32.0f + 16.0f, (hy + dy) * 32.0f + 16.0f);
+							Moved = true;
+						}
+		}
+	}
 	const int NumHints = (int)m_Job.m_vHints.size();
 	m_vvFields.resize(NumHints + 1);
 	for(int k = 0; k < NumHints; k++)
@@ -588,7 +618,7 @@ void CSearch::Run()
 			TeleIns += !m_Job.m_vTele.empty() && (m_Job.m_vTele[i].m_Type == TILE_TELEIN || m_Job.m_vTele[i].m_Type == TILE_TELEINEVIL);
 		}
 		Log("map %d x %d cells, start at %.0f %.0f, finish cells %d, teleport ins %d\n", m_Job.m_Width, m_Job.m_Height, m_Job.m_Start.x / 32.0f, m_Job.m_Start.y / 32.0f, Finish, TeleIns);
-		Log("hints %d (%s), tower check depth %d, max tries %d\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries);
+		Log("hints %d (%s), tower check depth %d, max tries %d, %s check\n", NumHints, m_Job.m_Result.m_vAutoHints.empty() ? "set by the mapper" : "automatic route", m_Job.m_TowerDepth, m_Job.m_MaxTries, m_Job.m_Forgiving ? "soft" : "strict");
 		Log("way through free cells from the start: %.0f cells\n", Heuristic(m_Job.m_Start, 0) >= FAR ? -1.0f : Heuristic(m_Job.m_Start, 0) / 32.0f);
 	}
 	if(Heuristic(m_Job.m_Start, 0) >= FAR)
@@ -736,6 +766,7 @@ void CSearch::Run()
 			Load(Core, Node.m_State);
 			int TeleCheckpoint = Node.m_State.m_TeleCheckpoint;
 			int FreezeTicks = Node.m_State.m_FreezeTicks;
+			int FreezeTouch = Node.m_State.m_FreezeTouch;
 			bool Dead = false, Done = false;
 			const int Ticks = NearFreeze(Node.m_State.m_Pos) ? FINE_STEP_TICKS : STEP_TICKS;
 			for(int t = 0; t < Ticks && !Dead && !Done; t++)
@@ -774,7 +805,15 @@ void CSearch::Run()
 					if(FreezeTicks > 0)
 						FreezeTicks--;
 					bool Unfrozen = false;
+					m_TouchedFreeze = false;
 					HandleTiles(PrevPos, Core, TeleCheckpoint, FreezeTicks, Unfrozen, Dead, Done);
+					if(m_Job.m_Forgiving)
+					{
+						// the soft check: a short touch of freeze is forgiven
+						FreezeTouch = m_TouchedFreeze ? FreezeTouch + 1 : 0;
+						if(FreezeTouch >= 3 && !Unfrozen)
+							FreezeTicks = FREEZE_TICKS;
+					}
 					// freeze is passed only when an unfreeze tile ends it on the way (maps made like that); thawing
 					// out by waiting 3 s after falling through freeze is a skip, not the way
 					if(!Dead && WasFrozen && FreezeTicks == 0 && !Unfrozen)
@@ -797,6 +836,7 @@ void CSearch::Run()
 			Save(Core, New);
 			New.m_TeleCheckpoint = TeleCheckpoint;
 			New.m_FreezeTicks = FreezeTicks;
+			New.m_FreezeTouch = FreezeTouch;
 			uint64_t Key = (uint64_t)(int)(New.m_Pos.x / 4.0f) & 0xffff;
 			Key = Key << 16 | ((uint64_t)(int)(New.m_Pos.y / 4.0f) & 0xffff);
 			Key = Key << 8 | ((uint64_t)(int)(New.m_Vel.x / 2.0f + 128.0f) & 0xff);
@@ -807,7 +847,9 @@ void CSearch::Run()
 			Key ^= (uint64_t)(New.m_FreezeTicks / 10 + 1) * 0xc4ceb9fe1a85ec53ull;
 			// a hint reached: the next one is the target
 			int Stage = std::max(Node.m_Stage, std::min(SkipStage, (int)m_Job.m_vHints.size()));
-			while(Stage < (int)m_Job.m_vHints.size() && distance(New.m_Pos, m_Job.m_vHints[Stage]) < 64.0f)
+			// a hint counts as passed when the tee is near it, or already farther along the way than it (it may fly
+			// past a hint in a wide place without touching it)
+			while(Stage < (int)m_Job.m_vHints.size() && (distance(New.m_Pos, m_Job.m_vHints[Stage]) < 64.0f || Field(Stage + 1, New.m_Pos) + 16.0f < Field(Stage + 1, m_Job.m_vHints[Stage])))
 				Stage++;
 			Key ^= (uint64_t)Stage * 0x9e3779b97f4a7c15ull;
 			if(New.m_HookState == HOOK_GRABBED)
@@ -948,11 +990,12 @@ void CSearch::Run()
 }
 } // namespace
 
-std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints, int TowerDepth)
+std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints, int TowerDepth, bool Forgiving)
 {
 	auto pJob = std::make_shared<CJob>();
 	pJob->m_vHints = vHints;
 	pJob->m_TowerDepth = TowerDepth;
+	pJob->m_Forgiving = Forgiving;
 	pJob->m_Width = Width;
 	pJob->m_Height = Height;
 	pJob->m_vGame.assign(pGame, pGame + (size_t)Width * Height);
