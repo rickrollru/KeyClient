@@ -685,6 +685,9 @@ void CSearch::Run()
 	const int FineStepTicks = m_Job.m_Ideal ? 1 : FINE_STEP_TICKS;
 	// how much a tick of game time weighs against distance: the ideal run cares more about being fast
 	const float TickWeight = m_Job.m_Ideal ? 12.0f : 5.0f;
+	// the ideal run makes shorter steps, so many more of its states fall into one cell: without more room per cell
+	// it ran out of tries in a shaft lined with freeze (a report on 70s)
+	const int CellCapScale = m_Job.m_Ideal ? 3 : 1;
 
 	// a deque grows without copying everything over, so a long search does not need twice the memory for a moment
 	std::deque<SNode> vNodes;
@@ -907,7 +910,7 @@ void CSearch::Run()
 			{
 				const int cx = std::clamp((int)(New.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), cy = std::clamp((int)(New.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
 				const int Cell = (cy * m_Job.m_Width + cx) * 4 + (Stage & 3);
-				if(!Done && vPerCell[Cell] >= (NearFreeze(New.m_Pos) ? 160 : 40))
+				if(!Done && vPerCell[Cell] >= (NearFreeze(New.m_Pos) ? 160 : 40) * CellCapScale)
 					continue;
 				vPerCell[Cell]++;
 			}
