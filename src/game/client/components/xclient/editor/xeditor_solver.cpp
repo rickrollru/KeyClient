@@ -118,13 +118,13 @@ private:
 		const int x = (int)std::floor(Pos.x / 32.0f), y = (int)std::floor(Pos.y / 32.0f);
 		return Tile(m_Job.m_vGame, x, y) == TILE_FINISH || Tile(m_Job.m_vFront, x, y) == TILE_FINISH;
 	}
-	// the server checks the tiles around the tee this far from its middle
-	bool Touches(vec2 Pos, bool (CSearch::*pfnTest)(vec2) const) const
+	// like the server (GetMapIndices): the tiles the middle of the tee passes from the last tick to this one
+	bool Passes(vec2 From, vec2 To, bool (CSearch::*pfnTest)(vec2) const) const
 	{
-		const float r = 28.0f / 3.0f;
-		const vec2 aPoints[] = {Pos, Pos + vec2(-r, -r), Pos + vec2(r, -r), Pos + vec2(-r, r), Pos + vec2(r, r)};
-		for(const vec2 &Point : aPoints)
-			if((this->*pfnTest)(Point))
+		const float Distance = distance(From, To);
+		const int Num = (int)(Distance / 8.0f) + 1;
+		for(int i = 0; i <= Num; i++)
+			if((this->*pfnTest)(mix(From, To, (float)i / Num)))
 				return true;
 		return false;
 	}
@@ -318,12 +318,13 @@ void CSearch::Run()
 					Input.m_TargetX = (int)Step.m_Target.x;
 					Input.m_TargetY = (int)Step.m_Target.y;
 				}
+				const vec2 PrevPos = Core.m_Pos;
 				Core.Tick(true);
 				Core.Move();
 				Core.Quantize();
-				if(Core.m_Pos.x < 0.0f || Core.m_Pos.y < 0.0f || Core.m_Pos.x >= m_Job.m_Width * 32.0f || Core.m_Pos.y >= m_Job.m_Height * 32.0f || Touches(Core.m_Pos, &CSearch::DeadlyAt))
+				if(Core.m_Pos.x < 0.0f || Core.m_Pos.y < 0.0f || Core.m_Pos.x >= m_Job.m_Width * 32.0f || Core.m_Pos.y >= m_Job.m_Height * 32.0f || Passes(PrevPos, Core.m_Pos, &CSearch::DeadlyAt))
 					Dead = true;
-				else if(Touches(Core.m_Pos, &CSearch::FinishAt))
+				else if(Passes(PrevPos, Core.m_Pos, &CSearch::FinishAt))
 					Done = true;
 			}
 			if(Dead)
