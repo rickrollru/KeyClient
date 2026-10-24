@@ -462,7 +462,9 @@ void CXcEditorUi::Render()
 				m_vSolveHints.push_back(E.MapView()->MouseWorldPos());
 			else if(ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_vSolveHints.empty())
 				m_vSolveHints.pop_back();
-			m_WantsMouse = true;
+			// only the left and right buttons: the wheel and the middle button still zoom and move the map
+			if(ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right))
+				m_WantsMouse = true;
 		}
 		HandleTyping();
 		// Esc closes the menus and stops typing before it can close the editor
