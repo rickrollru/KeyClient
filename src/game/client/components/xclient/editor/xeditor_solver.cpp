@@ -416,9 +416,12 @@ std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile 
 	int Spawn = -1, StartLine = -1;
 	for(int i = 0; i < Width * Height; i++)
 	{
-		if(Spawn < 0 && pGame[i].m_Index == ENTITY_OFFSET + ENTITY_SPAWN)
+		// the spawn, the start and the finish can be in the game layer or in the front layer
+		const int Front = pFront ? pFront[i].m_Index : 0;
+		auto IsSpawn = [](int Index) { return Index >= ENTITY_OFFSET + ENTITY_SPAWN && Index <= ENTITY_OFFSET + ENTITY_SPAWN_BLUE; };
+		if(Spawn < 0 && (IsSpawn(pGame[i].m_Index) || IsSpawn(Front)))
 			Spawn = i;
-		if(StartLine < 0 && pGame[i].m_Index == TILE_START)
+		if(StartLine < 0 && (pGame[i].m_Index == TILE_START || Front == TILE_START))
 			StartLine = i;
 		if(pGame[i].m_Index == TILE_FINISH || (pFront && pFront[i].m_Index == TILE_FINISH))
 			pJob->m_HasGoal = true;
