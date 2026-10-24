@@ -397,7 +397,7 @@ static void FormatRaceTime(char *pBuf, int Size, int Ticks)
 	str_format(pBuf, Size, "%d:%02d.%02d", Centis / 6000, (Centis / 100) % 60, Centis % 100);
 }
 
-void CXcEditorUi::StartSolve()
+void CXcEditorUi::StartSolve(int TowerDepth, const char *pLevel)
 {
 	CEditor &E = *m_pEditor;
 	const std::shared_ptr<CLayerGame> &pGame = E.Map()->m_pGameLayer;
@@ -406,7 +406,9 @@ void CXcEditorUi::StartSolve()
 	const std::shared_ptr<CLayerFront> &pFront = E.Map()->m_pFrontLayer;
 	m_vSolvePath.clear();
 	const std::shared_ptr<CLayerTele> &pTele = E.Map()->m_pTeleLayer;
-	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 200000, m_vSolveHints);
+	m_pSolveJob = XcSolver::Start(pGame->m_pTiles, pFront ? pFront->m_pTiles : nullptr, pTele ? pTele->m_pTeleTile : nullptr, pGame->m_Width, pGame->m_Height, 200000, m_vSolveHints, TowerDepth);
+	m_SolveTowerDepth = TowerDepth;
+	m_pSolveTowerLevel = pLevel;
 	if(!m_pSolveJob->m_HasStart || !m_pSolveJob->m_HasGoal)
 	{
 		XcUi::Toast(Tr("The bot needs a spawn (or a start line) and a finish line in the game layer"), XcUi::TOAST_ERROR);
@@ -420,7 +422,8 @@ void CXcEditorUi::UpdateSolve()
 {
 	if(!m_pSolveJob || !m_pSolveJob->m_Done)
 		return;
-	const XcSolver::SResult &Result = m_pSolveJob->m_Result;
+	m_SolveResult = std::move(m_pSolveJob->m_Result);
+	const XcSolver::SResult &Result = m_SolveResult;
 	m_vSolvePath = Result.m_vPath;
 	m_SolveFound = Result.m_Found;
 	char aMsg[256];
@@ -431,6 +434,21 @@ void CXcEditorUi::UpdateSolve()
 	else
 		str_format(aMsg, sizeof(aMsg), Tr("The bot found no way (%d tries). It got to the red mark in %s"), Result.m_Explored, aTime);
 	XcUi::Toast(aMsg, Result.m_Found ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
+	// the length of the way in cells
+	float Length = 0.0f;
+	for(size_t i = 1; i < Result.m_vPath.size(); i++)
+		Length += distance(Result.m_vPath[i - 1], Result.m_vPath[i]);
+	str_format(aMsg, sizeof(aMsg), Tr("Length of the way: %d cells. Map > Bot: heat map shows the hard places"), (int)(Length / 32.0f));
+	XcUi::Toast(aMsg, XcUi::TOAST_INFO);
+	if(m_SolveTowerDepth > 0)
+	{
+		if(Result.m_vTowerSpots.empty())
+			str_format(aMsg, sizeof(aMsg), Tr("Tower skips (%s): none found on this way"), m_pSolveTowerLevel);
+		else
+			str_format(aMsg, sizeof(aMsg), Tr("Tower skips (%s): %d places, marked with T"), m_pSolveTowerLevel, (int)Result.m_vTowerSpots.size());
+		XcUi::Toast(aMsg, Result.m_vTowerSpots.empty() ? XcUi::TOAST_SUCCESS : XcUi::TOAST_ERROR);
+		m_ShowHeat = false;
+	}
 	m_pSolveJob.reset();
 }
 
@@ -470,6 +488,54 @@ void CXcEditorUi::RenderSolveHints()
 		str_format(aNumber, sizeof(aNumber), "%d", (int)i + 1);
 		E.TextRender()->Text(m_vSolveHints[i].x - 6.0f, m_vSolveHints[i].y - 9.0f, 16.0f, aNumber);
 	}
+	E.Ui()->MapScreen();
+}
+
+// the heat map: the cells the bot tried in, green (few tries) to red (many), and the way colored by its room
+void CXcEditorUi::RenderSolveHeat()
+{
+	CEditor &E = *m_pEditor;
+	const XcSolver::SResult &Result = m_SolveResult;
+	CLayerGroup *pGroup = nullptr;
+	for(const auto &pG : E.Map()->m_vpGroups)
+		if(pG->m_GameGroup)
+			pGroup = pG.get();
+	if(!pGroup)
+		return;
+	pGroup->MapScreen();
+	IGraphics *pGraphics = E.Graphics();
+	uint16_t Max = 1;
+	for(uint16_t Heat : Result.m_vHeat)
+		Max = std::max(Max, Heat);
+	const float LogMax = std::log2(1.0f + Max);
+	pGraphics->TextureClear();
+	pGraphics->QuadsBegin();
+	for(int y = 0; y < Result.m_Height; y++)
+		for(int x = 0; x < Result.m_Width; x++)
+		{
+			const uint16_t Heat = Result.m_vHeat[y * Result.m_Width + x];
+			if(!Heat)
+				continue;
+			const float t = std::log2(1.0f + Heat) / LogMax;
+			pGraphics->SetColor(std::min(1.0f, t * 2.0f), std::min(1.0f, 2.0f - t * 2.0f), 0.15f, 0.35f);
+			const IGraphics::CQuadItem Quad(x * 32.0f, y * 32.0f, 32.0f, 32.0f);
+			pGraphics->QuadsDrawTL(&Quad, 1);
+		}
+	// the way: red where it is one cell wide or freeze is right next to it, yellow when tight, green with room
+	for(size_t i = 0; i + 1 < m_vSolvePath.size() && i < Result.m_vRoom.size(); i++)
+	{
+		const int Room = Result.m_vRoom[i];
+		pGraphics->SetColor(Room <= 1 ? ColorRGBA(1.0f, 0.25f, 0.25f, 1.0f) : Room == 2 ? ColorRGBA(1.0f, 0.85f, 0.2f, 1.0f) : ColorRGBA(0.3f, 1.0f, 0.5f, 1.0f));
+		const vec2 a = m_vSolvePath[i], b = m_vSolvePath[i + 1];
+		const vec2 Dir = b - a;
+		const float Len = length(Dir);
+		if(Len < 0.01f)
+			continue;
+		const vec2 Side = vec2(-Dir.y, Dir.x) / Len * 3.0f;
+		const IGraphics::CFreeformItem Item(a + Side, b + Side, a - Side, b - Side);
+		pGraphics->QuadsDrawFreeform(&Item, 1);
+	}
+	pGraphics->QuadsEnd();
 	E.Ui()->MapScreen();
 }
 
@@ -526,6 +592,11 @@ void CXcEditorUi::RenderSolvePath()
 	}
 	if(m_vSolvePath.size() < 2)
 		return;
+	if(m_ShowHeat && !m_SolveResult.m_vHeat.empty())
+	{
+		RenderSolveHeat();
+		return;
+	}
 	CLayerGroup *pGame = nullptr;
 	for(const auto &pGroup : E.Map()->m_vpGroups)
 		if(pGroup->m_GameGroup)
@@ -552,6 +623,21 @@ void CXcEditorUi::RenderSolvePath()
 		const IGraphics::CQuadItem Quad(End.x - 8.0f, End.y - 8.0f, 16.0f, 16.0f);
 		pGraphics->QuadsDrawTL(&Quad, 1);
 		pGraphics->QuadsEnd();
+	}
+	// tower skips: the frozen tees the way stood on or hooked
+	if(!m_SolveResult.m_vTowerSpots.empty())
+	{
+		pGraphics->TextureClear();
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(1.0f, 0.2f, 0.25f, 0.7f);
+		for(const vec2 &Spot : m_SolveResult.m_vTowerSpots)
+		{
+			const IGraphics::CQuadItem Quad(Spot.x - 16.0f, Spot.y - 16.0f, 32.0f, 32.0f);
+			pGraphics->QuadsDrawTL(&Quad, 1);
+		}
+		pGraphics->QuadsEnd();
+		for(const vec2 &Spot : m_SolveResult.m_vTowerSpots)
+			E.TextRender()->Text(Spot.x - 7.0f, Spot.y - 11.0f, 20.0f, "T");
 	}
 	E.Ui()->MapScreen();
 }

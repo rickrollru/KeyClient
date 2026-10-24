@@ -7,6 +7,7 @@
 #include <game/gamecore.h>
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <deque>
 #include <queue>
@@ -323,6 +324,33 @@ void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, 
 void CSearch::Run()
 {
 	XcSolver::SResult &Result = m_Job.m_Result;
+	// tower skip check: a frozen tee lies at the bottom of every shallow freeze pit; it stands like a block one
+	// tee high that can be stood on and hooked (on Extreme two of them: a pit two cells deep)
+	std::vector<uint8_t> vPlatform((size_t)m_Job.m_Width * m_Job.m_Height, 0);
+	if(m_Job.m_TowerDepth > 0)
+	{
+		const int w = m_Job.m_Width;
+		for(int x = 0; x < w; x++)
+			for(int y = m_Job.m_Height - 1; y > 0; y--)
+			{
+				const int Below = m_Job.m_vGame[y * w + x].m_Index;
+				if(Below != TILE_SOLID && Below != TILE_NOHOOK)
+					continue;
+				int Depth = 0;
+				while(y - 1 - Depth >= 0 && (Freezes(Tile(m_Job.m_vGame, x, y - 1 - Depth)) || Freezes(Tile(m_Job.m_vFront, x, y - 1 - Depth))))
+					Depth++;
+				if(Depth == 0 || Depth > m_Job.m_TowerDepth)
+					continue;
+				for(int d = 0; d < Depth; d++)
+				{
+					const int i = (y - 1 - d) * w + x;
+					m_Job.m_vGame[i].m_Index = TILE_SOLID;
+					if(!m_Job.m_vFront.empty())
+						m_Job.m_vFront[i].m_Index = 0;
+					vPlatform[i] = 1;
+				}
+			}
+	}
 	m_Collision.XcInitTiles(m_Job.m_vGame.data(), m_Job.m_vFront.empty() ? nullptr : m_Job.m_vFront.data(), m_Job.m_Width, m_Job.m_Height);
 	BuildTeles();
 	m_vNearFreeze.assign((size_t)m_Job.m_Width * m_Job.m_Height, 0);
@@ -395,6 +423,7 @@ void CSearch::Run()
 	// a pocket that only looks close to the finish and goes on elsewhere
 	const int RegionW = m_Job.m_Width / 4 + 1, RegionH = m_Job.m_Height / 4 + 1;
 	std::vector<uint32_t> vRegionTries((size_t)RegionW * RegionH, 0);
+	std::vector<uint16_t> vHeat((size_t)m_Job.m_Width * m_Job.m_Height, 0);
 	auto Region = [&](vec2 Pos) {
 		return std::clamp((int)(Pos.y / 128.0f), 0, RegionH - 1) * RegionW + std::clamp((int)(Pos.x / 128.0f), 0, RegionW - 1);
 	};
@@ -409,6 +438,12 @@ void CSearch::Run()
 		Result.m_Explored++;
 		const SNode Node = vNodes[Index];
 		vRegionTries[Region(Node.m_State.m_Pos)]++;
+		{
+			const int hx = std::clamp((int)(Node.m_State.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), hy = std::clamp((int)(Node.m_State.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
+			uint16_t &Heat = vHeat[hy * m_Job.m_Width + hx];
+			if(Heat < 65535)
+				Heat++;
+		}
 		if((Result.m_Explored & 255) == 0)
 		{
 			m_Job.m_Progress = Result.m_Explored;
@@ -557,14 +592,63 @@ void CSearch::Run()
 	std::reverse(Result.m_vPath.begin(), Result.m_vPath.end());
 	std::reverse(Result.m_vSteps.begin(), Result.m_vSteps.end());
 	Result.m_Ticks = vNodes[Last].m_Steps;
+	Result.m_Width = m_Job.m_Width;
+	Result.m_Height = m_Job.m_Height;
+	Result.m_vHeat = std::move(vHeat);
+
+	// room along the way: the nearest wall or freeze around each point, in cells (up to 4)
+	auto Blocks = [&](int x, int y) {
+		const int g = Tile(m_Job.m_vGame, x, y), f = Tile(m_Job.m_vFront, x, y);
+		return g == TILE_SOLID || g == TILE_NOHOOK || Deadly(g) || Deadly(f) || Freezes(g) || Freezes(f);
+	};
+	for(const vec2 &Pos : Result.m_vPath)
+	{
+		const int px = (int)(Pos.x / 32.0f), py = (int)(Pos.y / 32.0f);
+		int Room = 4;
+		for(int r = 1; r <= 4 && Room == 4; r++)
+			for(int dy = -r; dy <= r && Room == 4; dy++)
+				for(int dx = -r; dx <= r; dx++)
+					if((std::abs(dx) == r || std::abs(dy) == r) && Blocks(px + dx, py + dy))
+					{
+						Room = r;
+						break;
+					}
+		Result.m_vRoom.push_back((uint8_t)Room);
+	}
+
+	// tower skips: where the way stood on a frozen tee or hooked one
+	if(m_Job.m_TowerDepth > 0)
+	{
+		std::set<int> Spots;
+		auto Platform = [&](vec2 Pos) {
+			const int x = (int)std::floor(Pos.x / 32.0f), y = (int)std::floor(Pos.y / 32.0f);
+			return x >= 0 && y >= 0 && x < m_Job.m_Width && y < m_Job.m_Height && vPlatform[y * m_Job.m_Width + x] ? y * m_Job.m_Width + x : -1;
+		};
+		for(int i = Last; i >= 0; i = vNodes[i].m_Parent)
+		{
+			const SState &State = vNodes[i].m_State;
+			const int Stand = Platform(State.m_Pos + vec2(0.0f, 14.0f + 4.0f));
+			if(Stand >= 0)
+				Spots.insert(Stand);
+			if(State.m_HookState == HOOK_GRABBED)
+			{
+				const int Hooked = Platform(State.m_HookPos);
+				if(Hooked >= 0)
+					Spots.insert(Hooked);
+			}
+		}
+		for(int Spot : Spots)
+			Result.m_vTowerSpots.push_back(vec2((Spot % m_Job.m_Width) * 32.0f + 16.0f, (Spot / m_Job.m_Width) * 32.0f + 16.0f));
+	}
 	m_Collision.Unload();
 }
 } // namespace
 
-std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints)
+std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints, int TowerDepth)
 {
 	auto pJob = std::make_shared<CJob>();
 	pJob->m_vHints = vHints;
+	pJob->m_TowerDepth = TowerDepth;
 	pJob->m_Width = Width;
 	pJob->m_Height = Height;
 	pJob->m_vGame.assign(pGame, pGame + (size_t)Width * Height);

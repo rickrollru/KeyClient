@@ -33,6 +33,15 @@ struct SResult
 	int m_Jumps = 0; // jumps used
 	int m_Explored = 0; // tries looked at
 	vec2 m_Closest = vec2(0.0f, 0.0f); // where it got closest to the goal when not found
+
+	// the heat map: tries spent in each cell (many tries: a hard place)
+	int m_Width = 0;
+	int m_Height = 0;
+	std::vector<uint16_t> m_vHeat;
+	// how much room the way has at each point: cells to the nearest wall or freeze (1: a one cell gap)
+	std::vector<uint8_t> m_vRoom;
+	// tower skips: cells of frozen tees the way stood on or hooked
+	std::vector<vec2> m_vTowerSpots;
 };
 
 // a search running in a thread: copies the tiles first, so the map can change meanwhile
@@ -59,10 +68,12 @@ public:
 	vec2 m_Start;
 	std::vector<vec2> m_vHints; // points the way has to pass, in this order, before the finish
 	int m_MaxTries = 200000;
+	// tower skip check: frozen tees lie in freeze pits up to this many cells deep (0: off)
+	int m_TowerDepth = 0;
 };
 
 // a search from the spawn (or start line) to the finish line of the layers; the tiles are copied
-std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {});
+std::shared_ptr<CJob> Start(const CTile *pGame, const CTile *pFront, const CTeleTile *pTele, int Width, int Height, int MaxTries, const std::vector<vec2> &vHints = {}, int TowerDepth = 0);
 } // namespace XcSolver
 
 #endif

@@ -346,11 +346,16 @@ private:
 	std::shared_ptr<XcSolver::CJob> m_pSolveJob;
 	std::vector<vec2> m_vSolvePath;
 	bool m_SolveFound = false;
+	XcSolver::SResult m_SolveResult; // the last result: heat map, room along the way, tower spots
+	bool m_ShowHeat = false;
+	int m_SolveTowerDepth = 0; // the running search looks for tower skips
+	const char *m_pSolveTowerLevel = "";
 	// help for the bot: points the way passes in order, set by clicks while the mode is on
 	std::vector<vec2> m_vSolveHints;
 	bool m_HintMode = false;
 	void RenderSolveHints();
-	void StartSolve();
+	void RenderSolveHeat();
+	void StartSolve(int TowerDepth = 0, const char *pLevel = "");
 	void UpdateSolve();
 	void RenderSolvePath();
 

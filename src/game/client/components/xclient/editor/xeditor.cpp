@@ -913,6 +913,22 @@ float CXcEditorUi::RenderMenus(float x, float Mid)
 					m_HintMode = !m_HintMode;
 				if(!m_vSolveHints.empty() && ImGui::MenuItem(Tr("Bot: clear the hints")))
 					m_vSolveHints.clear();
+				if(ImGui::MenuItem(Tr("Bot: heat map"), nullptr, m_ShowHeat, !m_SolveResult.m_vHeat.empty()))
+					m_ShowHeat = !m_ShowHeat;
+				if(ImGui::BeginMenu(Tr("Bot: look for tower skips"), !m_pSolveJob))
+				{
+					// how deep a freeze pit may be and still let a frozen tee (or two) be a step: by the difficulty
+					ImGui::MenuItem(Tr("Easy: towers do not matter"), nullptr, false, false);
+					if(ImGui::MenuItem("Main"))
+						StartSolve(1, "Main");
+					if(ImGui::MenuItem("Hard"))
+						StartSolve(1, "Hard");
+					if(ImGui::MenuItem("Insane"))
+						StartSolve(1, "Insane");
+					if(ImGui::MenuItem(Tr("Extreme (even two cells of freeze)")))
+						StartSolve(2, "Extreme");
+					ImGui::EndMenu();
+				}
 				if(!m_vSolvePath.empty() && ImGui::MenuItem(Tr("Bot: hide the way")))
 					m_vSolvePath.clear();
 				ImGui::Separator();
