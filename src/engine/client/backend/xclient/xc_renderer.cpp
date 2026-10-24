@@ -333,7 +333,17 @@ void main()
 	// soft shadow where the face meets a wall: the corners next to it along the edge
 	const ivec2 aAoStart[4] = ivec2[4](ivec2(-1, -1), ivec2(-1, 1), ivec2(-1, -1), ivec2(1, -1));
 	const ivec2 aAoEnd[4] = ivec2[4](ivec2(1, -1), ivec2(1, 1), ivec2(-1, 1), ivec2(1, 1));
-	v_Ao = Freeze ? vec2(0.0) : vec2(Solid(Pos + aAoStart[Face]) ? 1.0 : 0.0, Solid(Pos + aAoEnd[Face]) ? 1.0 : 0.0);
+	if(Freeze)
+	{
+		// ice: where the face ends (the next cell along the edge has no freeze face) instead of a wall shadow
+		const ivec2 aAlong[4] = ivec2[4](ivec2(1, 0), ivec2(1, 0), ivec2(0, 1), ivec2(0, 1));
+		ivec2 Before = Pos - aAlong[Face], After = Pos + aAlong[Face];
+		bool GoesBefore = Cell(Before) == 3u && Cell(Before + aDir[Face]) == 0u;
+		bool GoesAfter = Cell(After) == 3u && Cell(After + aDir[Face]) == 0u;
+		v_Ao = vec2(GoesBefore ? 0.0 : 1.0, GoesAfter ? 0.0 : 1.0);
+	}
+	else
+		v_Ao = vec2(Solid(Pos + aAoStart[Face]) ? 1.0 : 0.0, Solid(Pos + aAoEnd[Face]) ? 1.0 : 0.0);
 	uvec4 Texel = texelFetch(u_Grid, Pos, 0);
 	v_MapColor = vec4(vec3(Texel.rgb) / 255.0, (Texel.a & 4u) != 0u ? 1.0 : 0.0);
 }
@@ -368,9 +378,9 @@ void main()
 	if(v_MapColor.a > 0.5)
 		Color.rgb = Freeze ? mix(v_MapColor.rgb, u_Color3.rgb, 0.5) : v_MapColor.rgb;
 	// a fine grain, so a long face is not one flat color
-	float Grain = Hash(floor(v_World / 4.0) + vec2(v_Depth * 9.0, float(v_Face))) - 0.5;
+	float Grain = Freeze ? 0.0 : Hash(floor(v_World / 4.0) + vec2(v_Depth * 9.0, float(v_Face))) - 0.5;
 	// the corner with a wall gets darker
-	float Ao = v_Ao.x * (1.0 - smoothstep(0.0, 0.4, v_U)) + v_Ao.y * smoothstep(0.6, 1.0, v_U);
+	float Ao = Freeze ? 0.0 : v_Ao.x * (1.0 - smoothstep(0.0, 0.4, v_U)) + v_Ao.y * smoothstep(0.6, 1.0, v_U);
 	vec3 Rgb = Color.rgb * v_Shade * mix(1.0, 0.75, v_Far) * (1.0 - 0.35 * Ao) * (1.0 + Grain * 0.06);
 	// a light bevel along the front edge, a dark crease along the back one
 	float Front = 1.0 - smoothstep(0.0, 0.06, v_Edge);
@@ -379,8 +389,10 @@ void main()
 	float Alpha = Color.a;
 	if(Freeze)
 	{
-		// ice: brighter and more solid along its edges
-		float Rim = max(1.0 - smoothstep(0.0, 0.08, min(v_U, 1.0 - v_U)), 1.0 - smoothstep(0.0, 0.08, min(v_Depth, 1.0 - v_Depth)));
+		// ice: brighter and more solid along its edges; across a long face only at its real ends, not at every
+		// cell (that gave stripes)
+		float Ends = max(v_Ao.x * (1.0 - smoothstep(0.0, 0.08, v_U)), v_Ao.y * smoothstep(0.92, 1.0, v_U));
+		float Rim = max(Ends, 1.0 - smoothstep(0.0, 0.08, min(v_Depth, 1.0 - v_Depth)));
 		Rgb += vec3(0.25) * Rim;
 		Alpha = clamp(Alpha + 0.35 * Rim, 0.0, 1.0);
 	}

@@ -225,9 +225,28 @@ void CGraphics_Threaded::MapScreen(const CScreenRect &ScreenRect)
 	{
 		// the rect given out by GetScreen comes back (saved and restored): it stands for the same view
 		CScreenRect Core = ScreenRect;
+		bool Found = false;
 		for(const auto &aKnown : m_aXcTiltKnown)
 			if(ScreenRect.m_TopLeft == aKnown[0] && ScreenRect.m_BottomRight == aKnown[1] && aKnown[2] != aKnown[3])
+			{
 				Core = CScreenRect(aKnown[2], aKnown[3]);
+				Found = true;
+			}
+		// the same rect moved (text drawn at a place maps the screen moved by it): the view moved the same way
+		if(!Found)
+		{
+			const vec2 Size = ScreenRect.m_BottomRight - ScreenRect.m_TopLeft;
+			for(const auto &aKnown : m_aXcTiltKnown)
+			{
+				const vec2 KnownSize = aKnown[1] - aKnown[0];
+				if(aKnown[2] != aKnown[3] && std::abs(Size.x - KnownSize.x) < 0.01f && std::abs(Size.y - KnownSize.y) < 0.01f)
+				{
+					const vec2 Delta = ScreenRect.m_TopLeft - aKnown[0];
+					Core = CScreenRect(aKnown[2] + Delta, aKnown[3] + Delta);
+					break;
+				}
+			}
+		}
 		const XcTilt::SCamera Cam = XcTilt::FromRect(Core.m_TopLeft.x, Core.m_TopLeft.y, Core.m_BottomRight.x, Core.m_BottomRight.y, m_XcTiltPitch, m_XcTiltYaw, m_XcTiltFov);
 		float x0, y0, x1, y1;
 		if(m_XcFirstPerson)
@@ -1845,6 +1864,9 @@ void CGraphics_Threaded::RenderQuadContainerEx(int ContainerIndex, int QuadOffse
 		// XClient: the tilted camera moves and scales the same way
 		Cmd.m_State.m_XcCoreTL = (m_State.m_XcCoreTL - vec2(X, Y)) / vec2(ScaleX, ScaleY);
 		Cmd.m_State.m_XcCoreBR = (m_State.m_XcCoreBR - vec2(X, Y)) / vec2(ScaleX, ScaleY);
+		// the depth of the plane is in world units, here everything is divided by the scale (the eyes of a tee
+		// stood in front of the body and looked spread apart)
+		Cmd.m_State.m_XcPlaneZ = m_State.m_XcPlaneZ / std::max(std::abs(ScaleY), 0.0001f);
 		// first person: the sprite stands at its place, turned to the camera
 		Cmd.m_State.m_XcBillboard = m_State.m_XcFirstPerson;
 		Cmd.m_State.m_XcAnchor = vec2(X, Y);
