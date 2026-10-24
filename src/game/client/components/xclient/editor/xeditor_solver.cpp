@@ -20,7 +20,7 @@ namespace
 constexpr int STEP_TICKS = 5;
 // near freeze every 2 ticks: dropping into a narrow shaft lined with freeze needs that precision
 constexpr int FINE_STEP_TICKS = 2;
-constexpr int MAX_TICKS = 50 * 60; // a minute
+constexpr int MAX_TICKS = 50 * 60 * 10; // ten minutes
 constexpr int FREEZE_TICKS = 50 * 3; // sv_freeze_delay
 constexpr float FAR = 1e9f;
 
@@ -156,6 +156,9 @@ private:
 	std::vector<std::vector<vec2>> m_vvCheckOuts; // [number - 1]
 	std::vector<std::vector<int>> m_vvTeleIns; // [number - 1] cells of normal and evil ins
 	void BuildTeles();
+	// without hints of the mapper: a route through the free cells that keeps to the middle of the ways and away
+	// from freeze, with a hint every few cells along it; the search goes from one to the next
+	void AutoHints();
 	const CTeleTile *TeleAt(vec2 Pos) const
 	{
 		if(m_Job.m_vTele.empty())
@@ -201,7 +204,7 @@ void CSearch::BuildField(std::vector<float> &vDistance, int Hint)
 		return Game != TILE_SOLID && Game != TILE_NOHOOK && !Deadly(Game) && !Deadly(Front);
 	};
 	// through freeze is possible but much harder
-	auto Cost = [&](int x, int y) { return Freezes(Tile(m_Job.m_vGame, x, y)) || Freezes(Tile(m_Job.m_vFront, x, y)) ? 32.0f * 8.0f : 32.0f; };
+	auto Cost = [&](int x, int y) { return Freezes(Tile(m_Job.m_vGame, x, y)) || Freezes(Tile(m_Job.m_vFront, x, y)) ? 32.0f * 400.0f : 32.0f; };
 	while(!Queue.empty())
 	{
 		const int i = Queue.front();
@@ -321,6 +324,120 @@ void CSearch::HandleTiles(vec2 From, CCharacterCore &Core, int &TeleCheckpoint, 
 	}
 }
 
+void CSearch::AutoHints()
+{
+	const int w = m_Job.m_Width, h = m_Job.m_Height;
+	auto Blocks = [&](int x, int y) {
+		if(x < 0 || y < 0 || x >= w || y >= h)
+			return true;
+		const int g = Tile(m_Job.m_vGame, x, y), f = Tile(m_Job.m_vFront, x, y);
+		return g == TILE_SOLID || g == TILE_NOHOOK || Deadly(g) || Deadly(f) || Freezes(g) || Freezes(f);
+	};
+	// room of each free cell: cells to the nearest wall or freeze, up to 3
+	std::vector<uint8_t> vRoom((size_t)w * h, 0);
+	for(int y = 0; y < h; y++)
+		for(int x = 0; x < w; x++)
+		{
+			if(Blocks(x, y))
+				continue;
+			int Room = 3;
+			for(int r = 1; r < 3 && Room == 3; r++)
+				for(int dy = -r; dy <= r && Room == 3; dy++)
+					for(int dx = -r; dx <= r; dx++)
+						if((std::abs(dx) == r || std::abs(dy) == r) && Blocks(x + dx, y + dy))
+						{
+							Room = r;
+							break;
+						}
+			vRoom[y * w + x] = (uint8_t)Room;
+		}
+	// distances from the finish, narrow cells cost more so the route keeps to the middle
+	std::vector<float> vDistance((size_t)w * h, FAR);
+	std::deque<int> Queue;
+	for(int i = 0; i < w * h; i++)
+		if(m_Job.m_vGame[i].m_Index == TILE_FINISH || (!m_Job.m_vFront.empty() && m_Job.m_vFront[i].m_Index == TILE_FINISH))
+		{
+			vDistance[i] = 0.0f;
+			Queue.push_back(i);
+		}
+	auto Cost = [&](int n) {
+		const int x = n % w, y = n / w;
+		const int g = Tile(m_Job.m_vGame, x, y), f = Tile(m_Job.m_vFront, x, y);
+		if(g == TILE_SOLID || g == TILE_NOHOOK || Deadly(g) || Deadly(f))
+			return FAR;
+		// through freeze only when there is no other way (some maps lead through freeze into unfreeze)
+		if(Freezes(g) || Freezes(f))
+			return 32.0f * 400.0f;
+		return 32.0f * (vRoom[n] == 1 ? 4.0f : vRoom[n] == 2 ? 1.6f : 1.0f);
+	};
+	while(!Queue.empty())
+	{
+		const int i = Queue.front();
+		Queue.pop_front();
+		const int x = i % w, y = i / w;
+		if(!m_Job.m_vTele.empty() && m_Job.m_vTele[i].m_Type == TILE_TELEOUT && m_Job.m_vTele[i].m_Number > 0)
+			for(int In : m_vvTeleIns[m_Job.m_vTele[i].m_Number - 1])
+				if(vDistance[In] > vDistance[i] + 32.0f)
+				{
+					vDistance[In] = vDistance[i] + 32.0f;
+					Queue.push_back(In);
+				}
+		const int aDx[] = {1, -1, 0, 0}, aDy[] = {0, 0, 1, -1};
+		for(int d = 0; d < 4; d++)
+		{
+			const int nx = x + aDx[d], ny = y + aDy[d];
+			if(nx < 0 || ny < 0 || nx >= w || ny >= h)
+				continue;
+			const int n = ny * w + nx;
+			const float c = Cost(n);
+			if(c >= FAR || vDistance[n] <= vDistance[i] + c)
+				continue;
+			vDistance[n] = vDistance[i] + c;
+			Queue.push_back(n);
+		}
+	}
+	// walk down from the spawn to the finish
+	int Cell = std::clamp((int)(m_Job.m_Start.y / 32.0f), 0, h - 1) * w + std::clamp((int)(m_Job.m_Start.x / 32.0f), 0, w - 1);
+	if(vDistance[Cell] >= FAR)
+		return;
+	std::vector<int> vRoute;
+	for(int Guard = 0; Guard < w * h && vDistance[Cell] > 0.0f; Guard++)
+	{
+		vRoute.push_back(Cell);
+		const int x = Cell % w, y = Cell / w;
+		int Next = -1;
+		float Best = vDistance[Cell];
+		const int aDx[] = {1, -1, 0, 0}, aDy[] = {0, 0, 1, -1};
+		for(int d = 0; d < 4; d++)
+		{
+			const int nx = x + aDx[d], ny = y + aDy[d];
+			if(nx >= 0 && ny >= 0 && nx < w && ny < h && vDistance[ny * w + nx] < Best)
+			{
+				Best = vDistance[ny * w + nx];
+				Next = ny * w + nx;
+			}
+		}
+		if(Next < 0)
+		{
+			// a teleport in: go on at its out
+			if(!m_Job.m_vTele.empty() && (m_Job.m_vTele[Cell].m_Type == TILE_TELEIN || m_Job.m_vTele[Cell].m_Type == TILE_TELEINEVIL) && m_Job.m_vTele[Cell].m_Number > 0 && !m_vvTeleOuts[m_Job.m_vTele[Cell].m_Number - 1].empty())
+			{
+				const vec2 Out = m_vvTeleOuts[m_Job.m_vTele[Cell].m_Number - 1][0];
+				Next = (int)(Out.y / 32.0f) * w + (int)(Out.x / 32.0f);
+			}
+			else
+				break;
+		}
+		Cell = Next;
+	}
+	// a hint every 6 cells of the route; each hint keeps its own distances, so a big map gets fewer of them
+	const int MaxHints = std::clamp(50000000 / std::max(w * h, 1), 16, 400);
+	const int Spacing = std::max(6, (int)vRoute.size() / MaxHints + 1);
+	for(size_t i = Spacing; i + Spacing / 2 < vRoute.size(); i += Spacing)
+		m_Job.m_vHints.push_back(vec2((vRoute[i] % w) * 32.0f + 16.0f, (vRoute[i] / w) * 32.0f + 16.0f));
+	m_Job.m_Result.m_vAutoHints = m_Job.m_vHints;
+}
+
 void CSearch::Run()
 {
 	XcSolver::SResult &Result = m_Job.m_Result;
@@ -361,6 +478,8 @@ void CSearch::Run()
 					for(int dx = -2; dx <= 2; dx++)
 						if(x + dx >= 0 && y + dy >= 0 && x + dx < m_Job.m_Width && y + dy < m_Job.m_Height)
 							m_vNearFreeze[(y + dy) * m_Job.m_Width + x + dx] = 1;
+	if(m_Job.m_vHints.empty())
+		AutoHints();
 	const int NumHints = (int)m_Job.m_vHints.size();
 	m_vvFields.resize(NumHints + 1);
 	for(int k = 0; k < NumHints; k++)
@@ -430,14 +549,45 @@ void CSearch::Run()
 	float BestDistance = FAR;
 	int BestNode = 0;
 	int Goal = -1;
+	// the search goes on hint by hint: once a few tries reached the next hint, the tries behind it are dropped;
+	// a hint that cannot be reached for long is skipped
+	int MaxStage = 0, AtMaxStage = 0, SinceStage = 0, SkipStage = 0;
+	// the tries left behind wait here: when every try ahead ends in a dead end, they come back
+	std::vector<TEntry> vReserve;
+	auto DropBehind = [&]() {
+		std::vector<TEntry> vKeep;
+		while(!Open.empty())
+		{
+			if(vNodes[Open.top().second].m_Stage >= MaxStage)
+				vKeep.push_back(Open.top());
+			else
+				vReserve.push_back(Open.top());
+			Open.pop();
+		}
+		for(const TEntry &Entry : vKeep)
+			Open.push(Entry);
+		std::fill(vRegionTries.begin(), vRegionTries.end(), 0);
+	};
 
-	while(!Open.empty() && Result.m_Explored < m_Job.m_MaxTries && !m_Job.m_Cancel)
+	while((!Open.empty() || !vReserve.empty()) && Result.m_Explored < m_Job.m_MaxTries && !m_Job.m_Cancel)
 	{
+		if(Open.empty())
+		{
+			for(const TEntry &Entry : vReserve)
+				Open.push(Entry);
+			vReserve.clear();
+		}
 		const int Index = Open.top().second;
 		Open.pop();
 		Result.m_Explored++;
 		const SNode Node = vNodes[Index];
 		vRegionTries[Region(Node.m_State.m_Pos)]++;
+		if(++SinceStage > 25000 && SkipStage <= MaxStage && MaxStage < (int)m_Job.m_vHints.size())
+		{
+			// this hint does not work out: aim at the next one
+			SkipStage = MaxStage + 1;
+			SinceStage = 0;
+		}
 		{
 			const int hx = std::clamp((int)(Node.m_State.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), hy = std::clamp((int)(Node.m_State.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
 			uint16_t &Heat = vHeat[hy * m_Job.m_Width + hx];
@@ -532,8 +682,8 @@ void CSearch::Run()
 			Key ^= (uint64_t)New.m_TeleCheckpoint * 0xff51afd7ed558ccdull;
 			Key ^= (uint64_t)(New.m_FreezeTicks / 10 + 1) * 0xc4ceb9fe1a85ec53ull;
 			// a hint reached: the next one is the target
-			int Stage = Node.m_Stage;
-			while(Stage < (int)m_Job.m_vHints.size() && distance(New.m_Pos, m_Job.m_vHints[Stage]) < 48.0f)
+			int Stage = std::max(Node.m_Stage, std::min(SkipStage, (int)m_Job.m_vHints.size()));
+			while(Stage < (int)m_Job.m_vHints.size() && distance(New.m_Pos, m_Job.m_vHints[Stage]) < 64.0f)
 				Stage++;
 			Key ^= (uint64_t)Stage * 0x9e3779b97f4a7c15ull;
 			if(New.m_HookState == HOOK_GRABBED)
@@ -542,7 +692,7 @@ void CSearch::Run()
 				continue;
 			{
 				const int cx = std::clamp((int)(New.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), cy = std::clamp((int)(New.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
-				const int Cell = (cy * m_Job.m_Width + cx) * 4 + std::min(Stage, 3);
+				const int Cell = (cy * m_Job.m_Width + cx) * 4 + (Stage & 3);
 				if(!Done && vPerCell[Cell] >= (NearFreeze(New.m_Pos) ? 160 : 40))
 					continue;
 				vPerCell[Cell]++;
@@ -569,6 +719,14 @@ void CSearch::Run()
 				BestDistance = Distance;
 				BestNode = ChildIndex;
 			}
+			if(Stage > MaxStage)
+			{
+				MaxStage = Stage;
+				AtMaxStage = 0;
+				SinceStage = 0;
+			}
+			if(Stage == MaxStage && ++AtMaxStage == 48)
+				DropBehind();
 			// mostly towards the finish, a little for being quick
 			Open.push({Distance + Child.m_Steps * 5.0f + vRegionTries[Region(New.m_Pos)] * 4.0f, ChildIndex});
 		}

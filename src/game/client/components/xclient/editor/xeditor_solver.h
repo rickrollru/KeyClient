@@ -42,6 +42,8 @@ struct SResult
 	std::vector<uint8_t> m_vRoom;
 	// tower skips: cells of frozen tees the way stood on or hooked
 	std::vector<vec2> m_vTowerSpots;
+	// the hints set along the route when the mapper gave none
+	std::vector<vec2> m_vAutoHints;
 };
 
 // a search running in a thread: copies the tiles first, so the map can change meanwhile

@@ -624,6 +624,19 @@ void CXcEditorUi::RenderSolvePath()
 		pGraphics->QuadsDrawTL(&Quad, 1);
 		pGraphics->QuadsEnd();
 	}
+	// the hints the bot set itself along the route
+	if(!m_SolveResult.m_vAutoHints.empty())
+	{
+		pGraphics->TextureClear();
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(0.45f, 0.75f, 1.0f, 0.45f);
+		for(const vec2 &Hint : m_SolveResult.m_vAutoHints)
+		{
+			const IGraphics::CQuadItem Quad(Hint.x - 4.0f, Hint.y - 4.0f, 8.0f, 8.0f);
+			pGraphics->QuadsDrawTL(&Quad, 1);
+		}
+		pGraphics->QuadsEnd();
+	}
 	// tower skips: the frozen tees the way stood on or hooked
 	if(!m_SolveResult.m_vTowerSpots.empty())
 	{
