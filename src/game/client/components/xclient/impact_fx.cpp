@@ -51,6 +51,30 @@ ColorRGBA CXcImpactFx::Color(int Weapon, int Owner) const
 	}
 }
 
+int CXcImpactFx::TeeOnLine(vec2 From, vec2 To, int Owner, vec2 *pHit) const
+{
+	// the server does not tell about hits on tees in DDRace, so a shot that ends at a tee hit it
+	int Best = -1;
+	float BestDist = 1e9f;
+	for(int i = 0; i < MAX_CLIENTS; i++)
+	{
+		if(i == Owner || !GameClient()->m_Snap.m_aCharacters[i].m_Active)
+			continue;
+		const vec2 Tee = GameClient()->m_aClients[i].m_RenderPos;
+		vec2 Closest;
+		if(!closest_point_on_line(From, To, Tee, Closest) || distance(Closest, Tee) > 30.0f)
+			continue;
+		const float Dist = distance(From, Closest);
+		if(Dist < BestDist)
+		{
+			BestDist = Dist;
+			Best = i;
+			*pHit = Tee + normalize(Closest - Tee + vec2(0.001f, 0.0f)) * 16.0f;
+		}
+	}
+	return Best;
+}
+
 vec2 CXcImpactFx::WallNormal(vec2 Pos, vec2 Before) const
 {
 	// the side of the hit block the shot came from
@@ -156,12 +180,13 @@ void CXcImpactFx::Impact(vec2 Pos, vec2 Dir, vec2 Normal, int Weapon, int Owner)
 	}
 }
 
-void CXcImpactFx::PlayerHit(vec2 Pos, vec2 Dir)
+void CXcImpactFx::PlayerHit(vec2 Pos, vec2 Dir, int HitTee)
 {
 	if(g_Config.m_XcHitPlayerFx == 0)
 		return;
 	const FxTune::CScope TuneScope(FxTune::IMPACT);
-	const ColorRGBA Main = EffectColor(GameClient(), g_Config.m_XcImpactColorMode, g_Config.m_XcImpactColor, -1);
+	const float Size = g_Config.m_XcHitPlayerSize / 100.0f;
+	const ColorRGBA Main = EffectColor(GameClient(), g_Config.m_XcHitPlayerColorMode, g_Config.m_XcHitPlayerColor, HitTee);
 	if(g_Config.m_XcHitPlayerFx == 1)
 	{
 		// a ring that pops on the tee
@@ -169,9 +194,9 @@ void CXcImpactFx::PlayerHit(vec2 Pos, vec2 Dir)
 		Ring.m_Type = CXcParticles::EType::RING;
 		Ring.m_Pos = Pos;
 		Ring.m_LifeSpan = 0.3f;
-		Ring.m_StartSize = 10.0f;
-		Ring.m_EndSize = 46.0f;
-		Ring.m_Thickness = 4.0f;
+		Ring.m_StartSize = 10.0f * Size;
+		Ring.m_EndSize = 46.0f * Size;
+		Ring.m_Thickness = 4.0f * Size;
 		Ring.m_Color = Main;
 		m_Particles.Add(Ring);
 		return;
@@ -184,10 +209,10 @@ void CXcImpactFx::PlayerHit(vec2 Pos, vec2 Dir)
 		CXcParticles::SParticle Particle;
 		Particle.m_Type = Stars ? CXcParticles::EType::STAR : CXcParticles::EType::SPARK;
 		Particle.m_Pos = Pos;
-		Particle.m_Vel = direction(BaseAngle + random_float(-0.9f, 0.9f)) * random_float(140.0f, 380.0f);
+		Particle.m_Vel = direction(BaseAngle + random_float(-0.9f, 0.9f)) * random_float(140.0f, 380.0f) * std::sqrt(Size);
 		Particle.m_Gravity = Stars ? 300.0f : 800.0f;
 		Particle.m_LifeSpan = random_float(0.25f, 0.45f);
-		Particle.m_StartSize = Stars ? random_float(11.0f, 16.0f) : random_float(5.0f, 8.0f);
+		Particle.m_StartSize = (Stars ? random_float(11.0f, 16.0f) : random_float(5.0f, 8.0f)) * Size;
 		Particle.m_Rot = random_float(0.0f, 2.0f * pi);
 		Particle.m_RotSpeed = Stars ? random_float(-6.0f, 6.0f) : 0.0f;
 		Particle.m_Color = i % 3 == 0 ? ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f) : Main;
@@ -211,7 +236,7 @@ void CXcImpactFx::Projectile(int ItemId, vec2 Pos, vec2 Vel, int Weapon, int Own
 
 void CXcImpactFx::Laser(vec2 From, vec2 To, int StartTick, int Owner, int Type)
 {
-	if((g_Config.m_XcImpactFx == IMPACT_OFF && !g_Config.m_XcImpactMuzzle) || !ShowTargets(Owner) || distance(From, To) < 1.0f)
+	if((g_Config.m_XcImpactFx == IMPACT_OFF && !g_Config.m_XcImpactMuzzle && !g_Config.m_XcHitPlayerFx) || !ShowTargets(Owner) || distance(From, To) < 1.0f)
 		return;
 	const long long Key = ((long long)(Owner + 1) << 40) ^ ((long long)Type << 32) ^ (unsigned)StartTick;
 	auto It = m_Lasers.find(Key);
@@ -219,12 +244,22 @@ void CXcImpactFx::Laser(vec2 From, vec2 To, int StartTick, int Owner, int Type)
 	if(New && g_Config.m_XcImpactMuzzle && Client()->GameTick(g_Config.m_ClDummy) - StartTick < 3)
 		Muzzle(From, normalize(To - From), WEAPON_LASER, Owner);
 	// every new end point is a hit, when there is a block right there
-	if(g_Config.m_XcImpactFx != IMPACT_OFF && (New || distance(It->second.m_To, To) > 1.0f))
+	if(New || distance(It->second.m_To, To) > 1.0f)
 	{
 		const vec2 Dir = normalize(To - From);
-		vec2 Col, Before;
+		vec2 Col, Before, Hit;
 		if(Collision()->IntersectLine(To - Dir * 4.0f, To + Dir * 6.0f, &Col, &Before))
-			Impact(Col, Dir, WallNormal(Col, Before), WEAPON_LASER, Owner);
+		{
+			if(g_Config.m_XcImpactFx != IMPACT_OFF)
+				Impact(Col, Dir, WallNormal(Col, Before), WEAPON_LASER, Owner);
+		}
+		else if(g_Config.m_XcHitPlayerFx)
+		{
+			// a laser that stops in the air stopped on a tee
+			const int Tee = TeeOnLine(To - Dir * 24.0f, To + Dir * 8.0f, Owner, &Hit);
+			if(Tee >= 0)
+				PlayerHit(Hit, Dir, Tee);
+		}
 	}
 	m_Lasers[Key] = {To, m_Frame};
 }
@@ -246,13 +281,18 @@ void CXcImpactFx::OnRender()
 			++It;
 			continue;
 		}
-		if(Shot.m_Weapon != WEAPON_GRENADE && ShowFor(Shot.m_Owner) && length(Shot.m_Vel) > 0.001f)
+		if(Shot.m_Weapon != WEAPON_GRENADE && ShowTargets(Shot.m_Owner) && length(Shot.m_Vel) > 0.001f)
 		{
 			// how far it can have flown since it was last drawn: a frame and a tick, with some room
 			const float Reach = std::clamp(Shot.m_Speed * (Client()->RenderFrameTime() + 1.0f / Client()->GameTickSpeed()) * 1.5f, 48.0f, 400.0f);
 			const vec2 Dir = normalize(Shot.m_Vel);
-			vec2 Col, Before;
-			if(Collision()->IntersectLine(Shot.m_Pos, Shot.m_Pos + Dir * Reach, &Col, &Before))
+			vec2 Col, Before, Hit;
+			const bool Wall = Collision()->IntersectLine(Shot.m_Pos, Shot.m_Pos + Dir * Reach, &Col, &Before);
+			// a tee before the wall took the shot
+			const int Tee = g_Config.m_XcHitPlayerFx ? TeeOnLine(Shot.m_Pos, Wall ? Col : Shot.m_Pos + Dir * Reach, Shot.m_Owner, &Hit) : -1;
+			if(Tee >= 0)
+				PlayerHit(Hit, Dir, Tee);
+			else if(Wall && ShowFor(Shot.m_Owner))
 				Impact(Col, Dir, WallNormal(Col, Before), Shot.m_Weapon, Shot.m_Owner);
 		}
 		It = m_Shots.erase(It);

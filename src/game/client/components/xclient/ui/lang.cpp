@@ -745,6 +745,8 @@ namespace XcUi
 			{"No servers found", "Серверы не найдены"},
 			{"Asking the master servers for the list", "Запрашиваю список у мастер-серверов"},
 			{"Try another filter or refresh the list", "Попробуй другой фильтр или обнови список"},
+			{"Bullets and lasers that hit a tee. Players and particles as for the hits on blocks", "Пули и лазеры, попавшие в ти. Игроки и частицы — как у попаданий по блокам"},
+			{"A flash where a bullet or a laser hits a tee", "Вспышка там, где пуля или лазер попали в ти"},
 			{"Cape and scarf", "Плащ и шарф"},
 			{"Energy", "Энергия"},
 			{"Cloth", "Ткань"},

@@ -62,10 +62,12 @@ private:
 
 public:
 	// a shot or the hammer hit a player (the damage event: a place and a direction, no owner)
-	void PlayerHit(vec2 Pos, vec2 Dir);
+	void PlayerHit(vec2 Pos, vec2 Dir, int HitTee = -1);
 
 private:
 	// direction out of the block that was hit at Pos, coming from Before
+	// the tee (not the owner) a shot passing from From to To hits, -1 for none
+	int TeeOnLine(vec2 From, vec2 To, int Owner, vec2 *pHit) const;
 	vec2 WallNormal(vec2 Pos, vec2 Before) const;
 };
 

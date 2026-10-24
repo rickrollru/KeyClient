@@ -77,25 +77,39 @@ void CWorldFx::HammerHit(vec2 Pos)
 	if(Style == HAMMER_OFF)
 		return;
 	const ColorRGBA Color = EffectColor(GameClient(), g_Config.m_XcHammerColorMode, g_Config.m_XcHammerColor, -1, random_float(0.0f, 0.2f));
-	CXcParticles::SParticle Ring;
-	Ring.m_Type = CXcParticles::EType::RING;
-	Ring.m_Pos = Pos;
-	Ring.m_LifeSpan = 0.36f;
-	Ring.m_StartSize = 10.0f;
-	Ring.m_EndSize = 64.0f;
-	Ring.m_Squash = 1.0f;
-	Ring.m_Thickness = 9.0f;
-	Ring.m_Color = Color;
-	m_Particles.Add(Ring);
-	// a second, quicker and whiter ring inside makes the hit snap
-	Ring.m_LifeSpan = 0.2f;
-	Ring.m_StartSize = 4.0f;
-	Ring.m_EndSize = 34.0f;
-	Ring.m_Thickness = 6.0f;
-	Ring.m_Color = ColorRGBA(mix(Color.r, 1.0f, 0.6f), mix(Color.g, 1.0f, 0.6f), mix(Color.b, 1.0f, 0.6f), Color.a);
-	m_Particles.Add(Ring);
-	if(Style == HAMMER_RING)
+	if(Style != HAMMER_RING)
+	{
+		// sparks and stars come out of a short bright flash, without the rings
+		CXcParticles::SParticle Flash;
+		Flash.m_Type = CXcParticles::EType::FLASH;
+		Flash.m_Pos = Pos;
+		Flash.m_LifeSpan = 0.12f;
+		Flash.m_StartSize = 8.0f;
+		Flash.m_EndSize = 30.0f;
+		Flash.m_Color = ColorRGBA(mix(Color.r, 1.0f, 0.6f), mix(Color.g, 1.0f, 0.6f), mix(Color.b, 1.0f, 0.6f), Color.a);
+		m_Particles.Add(Flash);
+	}
+	else
+	{
+		CXcParticles::SParticle Ring;
+		Ring.m_Type = CXcParticles::EType::RING;
+		Ring.m_Pos = Pos;
+		Ring.m_LifeSpan = 0.36f;
+		Ring.m_StartSize = 10.0f;
+		Ring.m_EndSize = 64.0f;
+		Ring.m_Squash = 1.0f;
+		Ring.m_Thickness = 9.0f;
+		Ring.m_Color = Color;
+		m_Particles.Add(Ring);
+		// a second, quicker and whiter ring inside makes the hit snap
+		Ring.m_LifeSpan = 0.2f;
+		Ring.m_StartSize = 4.0f;
+		Ring.m_EndSize = 34.0f;
+		Ring.m_Thickness = 6.0f;
+		Ring.m_Color = ColorRGBA(mix(Color.r, 1.0f, 0.6f), mix(Color.g, 1.0f, 0.6f), mix(Color.b, 1.0f, 0.6f), Color.a);
+		m_Particles.Add(Ring);
 		return;
+	}
 	for(int i = 0; i < 14; i++)
 	{
 		const float Angle = random_float(0.0f, 2.0f * pi);

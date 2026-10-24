@@ -60,7 +60,7 @@ namespace
 		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_WEAPONS, "##fx_hammer", "Hammer hit", "A flash where the hammer lands", "молоток удар хаммер hammer hit"},
 		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_WEAPONS, "##fx_explosion", "Grenade explosion", "A shockwave, neon rings or hot sparks where a grenade explodes", "взрыв граната волна неон explosion grenade shockwave"},
 		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_WEAPONS, "##fx_impact", "Hits on blocks", "Sparks where a bullet or a laser hits a block", "попадания пули искры стена блок bullet hit impact sparks wall"},
-		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_WEAPONS, "##fx_hit_player", "Hits on players", "A flash where a shot or the hammer hits a tee", "попадание урон игрок звёзды звёздочки damage hit player stars"},
+		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_WEAPONS, "##fx_hit_player", "Hits on players", "A flash where a bullet or a laser hits a tee", "попадание урон игрок звёзды звёздочки damage hit player stars"},
 		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_GENERAL, "##fx_over_tiles", "Over the blocks", "Effects and hats can be drawn over the map blocks, they stay visible behind walls", "поверх блоков стен карты слой over tiles blocks walls layer"},
 		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_GENERAL, "##fx_juice", "Juice", "Screen flashes and camera shake. Which events use them is chosen in the card of each event", "сочность вспышка тряска камера shake flash juice"},
 		{CXcMenu::PAGE_VISUALS, CXcMenu::VISUALS_GENERAL, "##fx_stock", "Stock effects", "The standard game effects are shown or hidden in the card of each event. Here all at once", "стандартные эффекты замена скрыть кровь дым лазер replace stock default"},

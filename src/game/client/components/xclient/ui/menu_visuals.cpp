@@ -745,10 +745,12 @@ void CXcMenu::RenderVisualsWeapons()
 		EndCard();
 	}
 	const char *apPlayerHits[] = {Tr("Ring"), Tr("Sparks"), Tr("Stars")};
-	if(StyleCard("##fx_hit_player", Tr("Hits on players"), Tr("A flash where a shot or the hammer hits a tee"), "xc_hit_player_fx", &g_Config.m_XcHitPlayerFx, apPlayerHits, 3))
+	if(StyleCard("##fx_hit_player", Tr("Hits on players"), Tr("A flash where a bullet or a laser hits a tee"), "xc_hit_player_fx", &g_Config.m_XcHitPlayerFx, apPlayerHits, 3))
 	{
+		EffectColorPicker("##hit_player_color", &g_Config.m_XcHitPlayerColorMode, &g_Config.m_XcHitPlayerColor);
+		ConfigSlider(Tr("Size"), "xc_hit_player_size", &g_Config.m_XcHitPlayerSize, 25, 300, "%d%%");
 		ToggleRow(Tr("Hide the standard orange stars"), "xc_replace_damage", &g_Config.m_XcReplaceDamage);
-		Description(Tr("In the color of the hits on blocks"));
+		Description(Tr("Bullets and lasers that hit a tee. Players and particles as for the hits on blocks"));
 		EndCard();
 	}
 	EndCardGrid();
