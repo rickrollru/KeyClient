@@ -8,6 +8,7 @@
 #include <game/gamecore.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <set>
@@ -25,7 +26,6 @@ constexpr int STEP_TICKS = 5;
 // near freeze every 2 ticks: dropping into a narrow shaft lined with freeze needs that precision
 constexpr int FINE_STEP_TICKS = 2;
 constexpr int MAX_TICKS = 50 * 60 * 10; // ten minutes
-constexpr size_t MAX_NODES = 6000000; // places kept for the way back: about 1 GB
 constexpr int FREEZE_TICKS = 50 * 3; // sv_freeze_delay
 constexpr float FAR = 1e9f;
 
@@ -237,40 +237,50 @@ const std::vector<CSearch::SHookSpot> &CSearch::HookSpots(vec2 Pos)
 
 void CSearch::AddAimedHooks(vec2 Pos, int Stage, int Count, std::vector<XcSolver::SStep> &vSteps)
 {
-	// one block in each direction around (the best one there for the way ahead): not only the hooks that pull
-	// forward, also the ones that brake or turn; a 70s report: the bot flew past a drop between freeze because
-	// the hook to the wall behind it, which stops the tee, was never tried
+	// the blocks that pull best towards the way ahead, and besides one block in each direction around: hooks that
+	// brake or turn are needed too (a 70s report: the bot flew past a drop between freeze because the hook to the
+	// wall behind was never tried), but only those lost the precise forward hooks a corridor needs (next report)
 	const std::vector<SHookSpot> &vSpots = HookSpots(Pos);
-	float aBest[16];
-	int aSpot[16];
-	const int Sectors = std::min(Count, 16);
-	for(int k = 0; k < Sectors; k++)
-	{
-		aBest[k] = FAR * 2.0f;
-		aSpot[k] = -1;
-	}
+	std::vector<std::pair<float, int>> vOrder;
 	for(int i = 0; i < (int)vSpots.size(); i++)
-	{
-		if(distance(vSpots[i].m_Hit, Pos) > 375.0f)
-			continue;
-		const float Angle = angle(vSpots[i].m_Hit - Pos) + pi;
-		const int k = std::clamp((int)(Angle / (2.0f * pi) * Sectors), 0, Sectors - 1);
-		const float Score = Heuristic(vSpots[i].m_Before, Stage);
-		if(Score < aBest[k])
+		if(distance(vSpots[i].m_Hit, Pos) <= 375.0f)
+			vOrder.push_back({Heuristic(vSpots[i].m_Before, Stage), i});
+	std::sort(vOrder.begin(), vOrder.end());
+	std::vector<float> vChosen;
+	auto Add = [&](int i) {
+		const float Angle = angle(vSpots[i].m_Hit - Pos);
+		for(float Other : vChosen)
 		{
-			aBest[k] = Score;
-			aSpot[k] = i;
+			float Diff = std::fabs(Angle - Other);
+			if(Diff > pi)
+				Diff = 2.0f * pi - Diff;
+			if(Diff < 4.0f * pi / 180.0f)
+				return;
 		}
-	}
-	for(int k = 0; k < Sectors; k++)
+		vChosen.push_back(Angle);
+	};
+	for(const auto &Entry : vOrder)
 	{
-		if(aSpot[k] < 0)
+		if((int)vChosen.size() >= Count)
+			break;
+		Add(Entry.second);
+	}
+	// one per direction: the best of each of 8 sectors (sorted already, so the first in a sector is its best)
+	bool aTaken[8] = {};
+	for(const auto &Entry : vOrder)
+	{
+		if(!m_Job.m_Variant.m_AimAround)
+			break;
+		const int k = std::clamp((int)((angle(vSpots[Entry.second].m_Hit - Pos) + pi) / (2.0f * pi) * 8.0f), 0, 7);
+		if(aTaken[k])
 			continue;
-		const vec2 Aim = normalize(vSpots[aSpot[k]].m_Hit - Pos) * 100.0f;
+		aTaken[k] = true;
+		Add(Entry.second);
+	}
+	for(float Angle : vChosen)
 		for(int Dir = -1; Dir <= 1; Dir++)
 			for(int Jump = 0; Jump <= 1; Jump++)
-				vSteps.push_back({Dir, Jump != 0, 2, Aim});
-	}
+				vSteps.push_back({Dir, Jump != 0, 2, direction(Angle) * 100.0f});
 }
 
 // Hint -1: from the finish line
@@ -719,13 +729,17 @@ void CSearch::Run()
 	// the ways a step can go: run left, stand, run right; jump or not; let the hook go, hold it or hook again
 	// towards one of a few directions; the hooks aimed at real blocks around are added for each place (below)
 	std::vector<XcSolver::SStep> vSteps;
-	const float aAngles[] = {-90.0f, -60.0f, -120.0f};
+	const XcSolver::SVariant &Variant = m_Job.m_Variant;
+	// straight sideways matters: a corridor one cell high with freeze above and below is crossed on a level hook
+	std::vector<float> vAngles = {-90.0f, -60.0f, -120.0f};
+	if(Variant.m_WideFixed)
+		vAngles.insert(vAngles.end(), {-30.0f, -150.0f, 0.0f, 180.0f});
 	for(int Dir = -1; Dir <= 1; Dir++)
 		for(int Jump = 0; Jump <= 1; Jump++)
 		{
 			vSteps.push_back({Dir, Jump != 0, 0, vec2(Dir == 0 ? 1.0f : (float)Dir, 0.0f) * 100.0f});
 			vSteps.push_back({Dir, Jump != 0, 1, vec2(0.0f, 0.0f)});
-			for(float Angle : aAngles)
+			for(float Angle : vAngles)
 				vSteps.push_back({Dir, Jump != 0, 2, direction(Angle * pi / 180.0f) * 100.0f});
 		}
 	// near freeze also the directions in between: a tunnel with freeze above and below is crossed hanging on one
@@ -755,7 +769,7 @@ void CSearch::Run()
 	const int StepTicks = m_Job.m_Ideal ? 2 : STEP_TICKS;
 	const int FineStepTicks = m_Job.m_Ideal ? 1 : FINE_STEP_TICKS;
 	// how much a tick of game time weighs against distance: the ideal run cares more about being fast
-	const float TickWeight = m_Job.m_Ideal ? 12.0f : 5.0f;
+	const float TickWeight = m_Job.m_Ideal ? 12.0f : Variant.m_TickWeight;
 	// the ideal run makes shorter steps, so many more of its states fall into one cell: without more room per cell
 	// it ran out of tries in a shaft lined with freeze (a report on 70s)
 	const int CellCapScale = m_Job.m_Ideal ? 3 : 1;
@@ -775,8 +789,8 @@ void CSearch::Run()
 	std::priority_queue<TEntry, std::vector<TEntry>, std::greater<>> Open;
 	Open.push({Heuristic(m_Job.m_Start, 0), 0});
 	std::unordered_set<uint64_t> Seen;
-	// a few dozen different states per cell are enough: more only digs deeper into the same dead end and
-	// uses up the tries, then the search has to look elsewhere
+	// a limit of different states per cell (by the variant): too few throws away the precise ones a tight place
+	// needs, too many digs deep into the same dead end; which is right depends on the map
 	std::vector<uint16_t> vPerCell((size_t)m_Job.m_Width * m_Job.m_Height * 4, 0);
 	// tiredness of a place: tries spent in each 4 x 4 cells make it less inviting, so the search climbs out of
 	// a pocket that only looks close to the finish and goes on elsewhere
@@ -854,6 +868,7 @@ void CSearch::Run()
 				vPath.push_back(vNodes[i].m_State.m_Pos);
 			std::reverse(vPath.begin(), vPath.end());
 			m_Job.m_LiveTicks = vNodes[BestNode].m_Steps;
+			m_Job.m_LiveHints = vNodes[BestNode].m_Stage;
 			std::lock_guard<std::mutex> Lock(m_Job.m_LiveMutex);
 			m_Job.m_vLivePath = std::move(vPath);
 		}
@@ -864,7 +879,7 @@ void CSearch::Run()
 				m_Job.m_vLiveTried.push_back(Node.m_State.m_Pos);
 		}
 		// far too many places kept: the memory would run out
-		if(vNodes.size() > MAX_NODES)
+		if(vNodes.size() > Variant.m_MaxNodes)
 		{
 			pStopReason = "out of memory for places";
 			break;
@@ -879,7 +894,7 @@ void CSearch::Run()
 		const bool Fine = NearFreeze(Node.m_State.m_Pos);
 		vNodeSteps = Fine ? vFineSteps : vSteps;
 		if(!m_Job.m_Ideal)
-			AddAimedHooks(Node.m_State.m_Pos, Node.m_Stage, Fine ? 12 : 8, vNodeSteps);
+			AddAimedHooks(Node.m_State.m_Pos, Node.m_Stage, Fine ? Variant.m_AimFreeze : Variant.m_Aim, vNodeSteps);
 		for(const XcSolver::SStep &Step : vNodeSteps)
 		{
 			if(Step.m_Hook == 1 && !Hooking)
@@ -972,7 +987,11 @@ void CSearch::Run()
 			Key ^= (uint64_t)(New.m_FreezeTicks / 10 + 1) * 0xc4ceb9fe1a85ec53ull;
 			// a hint reached: the next one is the target
 			// a skipped hint is skipped only for the tries that got as far as it, not for the ones far behind
-			int Stage = Node.m_Stage >= SkipStage - 1 ? std::max(Node.m_Stage, std::min(SkipStage, (int)m_Job.m_vHints.size())) : Node.m_Stage;
+			// a skipped hint counts as passed only near it: before, every try left far behind at that stage jumped
+			// over it too, "reached" the next hints by the field and pushed the real front into the reserve
+			int Stage = Node.m_Stage;
+			if(Stage == SkipStage - 1 && SkipStage <= (int)m_Job.m_vHints.size() && distance(New.m_Pos, m_Job.m_vHints[SkipStage - 1]) < 256.0f)
+				Stage = SkipStage;
 			// a hint counts as passed when the tee is near it, or already farther along the way than it (it may fly
 			// past a hint in a wide place without touching it)
 			// a frozen tee passes no hints: it is most likely lost, and counting it made the search drop the good
@@ -987,7 +1006,7 @@ void CSearch::Run()
 			{
 				const int cx = std::clamp((int)(New.m_Pos.x / 32.0f), 0, m_Job.m_Width - 1), cy = std::clamp((int)(New.m_Pos.y / 32.0f), 0, m_Job.m_Height - 1);
 				const int Cell = (cy * m_Job.m_Width + cx) * 4 + (Stage & 3);
-				if(!Done && vPerCell[Cell] >= (NearFreeze(New.m_Pos) ? 160 : 40) * CellCapScale)
+				if(!Done && vPerCell[Cell] >= (NearFreeze(New.m_Pos) ? Variant.m_CapFreeze : Variant.m_Cap) * CellCapScale)
 					continue;
 				vPerCell[Cell]++;
 			}
@@ -1046,6 +1065,7 @@ void CSearch::Run()
 	std::reverse(Result.m_vPath.begin(), Result.m_vPath.end());
 	std::reverse(Result.m_vSteps.begin(), Result.m_vSteps.end());
 	Result.m_Ticks = vNodes[Last].m_Steps;
+	Result.m_HintsPassed = vNodes[Last].m_Stage;
 	{
 		Log("\nresult: %s after %d tries%s\n", Goal >= 0 ? "FINISHED" : "no way", Result.m_Explored, m_Job.m_Cancel ? " (stopped)" : "");
 		if(Goal < 0 && !m_Job.m_Cancel)
@@ -1161,9 +1181,128 @@ std::shared_ptr<XcSolver::CJob> XcSolver::Start(const CTile *pGame, const CTile 
 		return pJob;
 	}
 	pJob->m_Start = vec2((From % Width) * 32.0f + 16.0f, (From / Width) * 32.0f + 16.0f);
-	std::thread([pJob]() {
-		CSearch Search(*pJob);
-		Search.Run();
+
+	// several searches with different settings at once, one per core (the search gets far with one setting and
+	// stuck early with another, differently on each map); the best result wins
+	std::vector<XcSolver::SVariant> vVariants;
+	{
+		XcSolver::SVariant V;
+		vVariants.push_back(V); // 100 / 500, aimed all around
+		V.m_Cap = 300;
+		V.m_CapFreeze = 1500;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Cap = 40;
+		V.m_CapFreeze = 160;
+		V.m_Aim = 8;
+		V.m_AimFreeze = 12;
+		V.m_AimAround = false;
+		V.m_WideFixed = false;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Cap = 200;
+		V.m_CapFreeze = 800;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Aim = 8;
+		V.m_AimFreeze = 12;
+		V.m_AimAround = false;
+		vVariants.push_back(V);
+		V = {};
+		V.m_Cap = 300;
+		V.m_CapFreeze = 1500;
+		V.m_TickWeight = 2.0f;
+		vVariants.push_back(V);
+	}
+	const int Cores = (int)std::thread::hardware_concurrency();
+	const int Num = std::clamp(Cores - 1, 1, (int)vVariants.size());
+	std::vector<std::shared_ptr<CJob>> vSubs;
+	for(int i = 0; i < Num; i++)
+	{
+		auto pSub = std::make_shared<CJob>();
+		pSub->m_HasStart = pJob->m_HasStart;
+		pSub->m_HasGoal = pJob->m_HasGoal;
+		pSub->m_Width = Width;
+		pSub->m_Height = Height;
+		pSub->m_vGame = pJob->m_vGame;
+		pSub->m_vFront = pJob->m_vFront;
+		pSub->m_vTele = pJob->m_vTele;
+		pSub->m_Start = pJob->m_Start;
+		pSub->m_vHints = pJob->m_vHints;
+		pSub->m_MaxTries = MaxTries;
+		pSub->m_TowerDepth = TowerDepth;
+		pSub->m_Forgiving = Forgiving;
+		pSub->m_Ideal = Ideal;
+		pSub->m_Variant = vVariants[i];
+		// the memory is shared out: about 2 GB for all of them
+		pSub->m_Variant.m_MaxNodes = 12000000 / Num;
+		vSubs.push_back(pSub);
+		std::thread([pSub]() {
+			CSearch Search(*pSub);
+			Search.Run();
+			pSub->m_Done = true;
+		}).detach();
+	}
+	// the one that watches them: shows the way of the one furthest along, stops the rest once one finished
+	std::thread([pJob, vSubs]() {
+		while(true)
+		{
+			bool AllDone = true, AnyFound = false;
+			int Progress = 0, Lead = 0;
+			for(int i = 0; i < (int)vSubs.size(); i++)
+			{
+				const CJob &Sub = *vSubs[i];
+				Progress += Sub.m_Progress;
+				AllDone &= Sub.m_Done.load();
+				AnyFound |= Sub.m_Done && Sub.m_Result.m_Found;
+				if(Sub.m_LiveHints > vSubs[Lead]->m_LiveHints)
+					Lead = i;
+			}
+			if(pJob->m_Cancel || AnyFound)
+				for(const auto &pSub : vSubs)
+					pSub->m_Cancel = true;
+			pJob->m_Progress = Progress;
+			pJob->m_LiveTicks = vSubs[Lead]->m_LiveTicks.load();
+			pJob->m_LiveHints = vSubs[Lead]->m_LiveHints.load();
+			{
+				std::vector<vec2> vPath, vTried;
+				{
+					std::lock_guard<std::mutex> Lock(vSubs[Lead]->m_LiveMutex);
+					vPath = vSubs[Lead]->m_vLivePath;
+					vTried = vSubs[Lead]->m_vLiveTried;
+				}
+				std::lock_guard<std::mutex> Lock(pJob->m_LiveMutex);
+				pJob->m_vLivePath = std::move(vPath);
+				pJob->m_vLiveTried = std::move(vTried);
+			}
+			if(AllDone)
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		}
+		// the winner: a finished way (the quickest), else the one that passed the most hints
+		int Best = 0;
+		for(int i = 1; i < (int)vSubs.size(); i++)
+		{
+			const SResult &A = vSubs[i]->m_Result, &B = vSubs[Best]->m_Result;
+			if(A.m_Found != B.m_Found ? A.m_Found : (A.m_Found ? A.m_Ticks < B.m_Ticks : A.m_HintsPassed > B.m_HintsPassed))
+				Best = i;
+		}
+		std::string Summary = "searches at once (one per core), each with other settings:\n";
+		int Explored = 0;
+		for(int i = 0; i < (int)vSubs.size(); i++)
+		{
+			const SResult &R = vSubs[i]->m_Result;
+			const SVariant &V = vSubs[i]->m_Variant;
+			char aLine[256];
+			str_format(aLine, sizeof(aLine), "  %d%s: per cell %d/%d, aimed %d/%d%s%s, time weight %.0f: %s, hints passed %d, %d tries\n", i + 1, i == Best ? " (this report)" : "",
+				V.m_Cap, V.m_CapFreeze, V.m_Aim, V.m_AimFreeze, V.m_AimAround ? " + around" : "", V.m_WideFixed ? "" : ", up only", V.m_TickWeight,
+				R.m_Found ? "FINISHED" : "no way", R.m_HintsPassed, R.m_Explored);
+			Summary += aLine;
+			Explored += R.m_Explored;
+		}
+		pJob->m_Result = std::move(vSubs[Best]->m_Result);
+		pJob->m_Result.m_Log = Summary + "\n" + pJob->m_Result.m_Log;
+		pJob->m_Result.m_Explored = Explored;
 		pJob->m_Done = true;
 	}).detach();
 	return pJob;

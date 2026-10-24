@@ -33,6 +33,7 @@ struct SResult
 	int m_Hooks = 0; // hooks used
 	int m_Jumps = 0; // jumps used
 	int m_Explored = 0; // tries looked at
+	int m_HintsPassed = 0; // hints passed by the best way
 	vec2 m_Closest = vec2(0.0f, 0.0f); // where it got closest to the goal when not found
 
 	// the heat map: tries spent in each cell (many tries: a hard place)
@@ -49,6 +50,20 @@ struct SResult
 	std::string m_Log;
 };
 
+// how one search goes about it: the search is sensitive to these (one setting gets far on a map where another
+// gets stuck early), so several searches with different settings run at once, one per processor core
+struct SVariant
+{
+	int m_Cap = 100; // different states kept per cell
+	int m_CapFreeze = 500; // the same near freeze, where the tee has to be precise
+	int m_Aim = 6; // hooks aimed at the blocks that pull best towards the way ahead
+	int m_AimFreeze = 8; // the same near freeze
+	bool m_AimAround = true; // also one aimed hook in each of 8 directions (to brake and turn)
+	bool m_WideFixed = true; // fixed hook directions also sideways, not only upwards
+	float m_TickWeight = 5.0f; // how much being quick counts against getting closer
+	size_t m_MaxNodes = 6000000; // places kept, for the memory
+};
+
 // a search running in a thread: copies the tiles first, so the map can change meanwhile
 class CJob
 {
@@ -61,6 +76,7 @@ public:
 	std::vector<vec2> m_vLivePath;
 	std::vector<vec2> m_vLiveTried;
 	std::atomic<int> m_LiveTicks = 0; // game time of the best way so far
+	std::atomic<int> m_LiveHints = 0; // hints passed by the best way so far
 	SResult m_Result;
 	bool m_HasStart = false;
 	bool m_HasGoal = false;
@@ -79,6 +95,7 @@ public:
 	bool m_Forgiving = false;
 	// not a human run: finer inputs and any hook direction, the fastest way the physics allows
 	bool m_Ideal = false;
+	SVariant m_Variant;
 };
 
 // a search from the spawn (or start line) to the finish line of the layers; the tiles are copied
